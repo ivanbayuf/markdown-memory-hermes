@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="660" role="img" aria-label="Native replay grows. The digest stays flat."><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b1035"/><stop offset="1" stop-color="#2e184e"/></linearGradient></defs><rect width="1500" height="660" fill="url(#bg)"/><text x="90" y="84" font-family="Liberation Sans, Arial, sans-serif" font-size="36" font-weight="bold" fill="#ffffff">Native replay grows. The digest stays flat.</text><text x="90" y="122" font-family="Liberation Sans, Arial, sans-serif" font-size="20" fill="#c9bee8">Input tokens per request, 20 turns x 3 requests. tiktoken cl100k_base on captured messages, 2026-11-24.</text>
+<line x1="90" y1="510.0" x2="1420" y2="510.0" stroke="#ffffff" stroke-opacity="0.12"/>
+<text x="78" y="516.0" font-family="monospace" font-size="18" fill="#c9bee8" text-anchor="end">0</text>
+<line x1="90" y1="415.7" x2="1420" y2="415.7" stroke="#ffffff" stroke-opacity="0.12"/>
+<text x="78" y="421.7" font-family="monospace" font-size="18" fill="#c9bee8" text-anchor="end">2,000</text>
+<line x1="90" y1="321.4" x2="1420" y2="321.4" stroke="#ffffff" stroke-opacity="0.12"/>
+<text x="78" y="327.4" font-family="monospace" font-size="18" fill="#c9bee8" text-anchor="end">4,000</text>
+<line x1="90" y1="227.1" x2="1420" y2="227.1" stroke="#ffffff" stroke-opacity="0.12"/>
+<text x="78" y="233.1" font-family="monospace" font-size="18" fill="#c9bee8" text-anchor="end">6,000</text>
+<text x="90.0" y="542" font-family="monospace" font-size="18" fill="#c9bee8" text-anchor="middle">1</text>
+<text x="518.3" y="542" font-family="monospace" font-size="18" fill="#c9bee8" text-anchor="middle">20</text>
+<text x="969.2" y="542" font-family="monospace" font-size="18" fill="#c9bee8" text-anchor="middle">40</text>
+<text x="1420.0" y="542" font-family="monospace" font-size="18" fill="#c9bee8" text-anchor="middle">60</text>
+<polyline points="90.0,502.6 112.5,498.4 135.1,491.2 157.6,493.1 180.2,488.9 202.7,481.7 225.3,488.6 247.8,484.3 270.3,477.1 292.9,484.1 315.4,479.9 338.0,472.9 360.5,479.7 383.1,475.3 405.6,468.2 428.1,475.3 450.7,471.1 473.2,463.9 495.8,470.5 518.3,466.5 540.8,459.4 563.4,466.0 585.9,461.8 608.5,454.4 631.0,466.0 653.6,461.5 676.1,454.6 698.6,466.0 721.2,461.5 743.7,454.5 766.3,466.0 788.8,461.7 811.4,454.4 833.9,465.8 856.4,461.3 879.0,454.0 901.5,465.8 924.1,461.6 946.6,454.7 969.2,465.8 991.7,461.6 1014.2,454.4 1036.8,466.1 1059.3,461.9 1081.9,455.0 1104.4,466.2 1126.9,462.0 1149.5,454.9 1172.0,466.1 1194.6,461.9 1217.1,454.7 1239.7,466.3 1262.2,462.0 1284.7,455.0 1307.3,466.2 1329.8,461.8 1352.4,454.7 1374.9,466.4 1397.5,462.3 1420.0,455.2" fill="none" stroke="#B7A6E8" stroke-width="4" stroke-linejoin="round"/>
+<circle cx="90.0" cy="502.6" r="5" fill="#B7A6E8"/>
+<circle cx="157.6" cy="493.1" r="5" fill="#B7A6E8"/>
+<circle cx="225.3" cy="488.6" r="5" fill="#B7A6E8"/>
+<circle cx="292.9" cy="484.1" r="5" fill="#B7A6E8"/>
+<circle cx="360.5" cy="479.7" r="5" fill="#B7A6E8"/>
+<circle cx="428.1" cy="475.3" r="5" fill="#B7A6E8"/>
+<circle cx="495.8" cy="470.5" r="5" fill="#B7A6E8"/>
+<circle cx="563.4" cy="466.0" r="5" fill="#B7A6E8"/>
+<circle cx="631.0" cy="466.0" r="5" fill="#B7A6E8"/>
+<circle cx="698.6" cy="466.0" r="5" fill="#B7A6E8"/>
+<circle cx="766.3" cy="466.0" r="5" fill="#B7A6E8"/>
+<circle cx="833.9" cy="465.8" r="5" fill="#B7A6E8"/>
+<circle cx="901.5" cy="465.8" r="5" fill="#B7A6E8"/>
+<circle cx="969.2" cy="465.8" r="5" fill="#B7A6E8"/>
+<circle cx="1036.8" cy="466.1" r="5" fill="#B7A6E8"/>
+<circle cx="1104.4" cy="466.2" r="5" fill="#B7A6E8"/>
+<circle cx="1172.0" cy="466.1" r="5" fill="#B7A6E8"/>
+<circle cx="1239.7" cy="466.3" r="5" fill="#B7A6E8"/>
+<circle cx="1307.3" cy="466.2" r="5" fill="#B7A6E8"/>
+<circle cx="1374.9" cy="466.4" r="5" fill="#B7A6E8"/>
+<polyline points="90.0,502.6 112.5,498.4 135.1,491.2 157.6,487.8 180.2,483.6 202.7,476.4 225.3,473.0 247.8,468.7 270.3,461.5 292.9,458.2 315.4,454.0 338.0,447.1 360.5,443.8 383.1,439.4 405.6,432.3 428.1,429.0 450.7,424.8 473.2,417.6 495.8,414.1 518.3,410.1 540.8,402.9 563.4,399.4 585.9,395.3 608.5,387.9 631.0,384.6 653.6,380.1 676.1,373.1 698.6,369.8 721.2,365.4 743.7,358.3 766.3,354.9 788.8,350.7 811.4,343.4 833.9,339.8 856.4,335.3 879.0,328.0 901.5,324.7 924.1,320.5 946.6,313.6 969.2,310.3 991.7,306.1 1014.2,298.8 1036.8,295.5 1059.3,291.3 1081.9,284.5 1104.4,281.1 1126.9,277.0 1149.5,269.9 1172.0,266.5 1194.6,262.3 1217.1,255.1 1239.7,251.8 1262.2,247.6 1284.7,240.6 1307.3,237.3 1329.8,232.9 1352.4,225.8 1374.9,222.5 1397.5,218.4 1420.0,211.2" fill="none" stroke="#f5a524" stroke-width="4" stroke-linejoin="round"/>
+<text x="1410" y="195.2" font-family="Liberation Sans, Arial, sans-serif" font-size="22" font-weight="bold" fill="#f5a524" text-anchor="end">Native 6,338</text>
+<text x="1410" y="495.2" font-family="Liberation Sans, Arial, sans-serif" font-size="22" font-weight="bold" fill="#B7A6E8" text-anchor="end">Plugin 1,163</text>
+<line x1="90" y1="566" x2="1420" y2="566" stroke="#ffffff" stroke-opacity="0.15"/>
+<text x="90" y="612" font-family="Liberation Sans, Arial, sans-serif" font-size="22" fill="#ffffff">Total <tspan font-weight="bold">194,565 to 54,204 tokens</tspan><tspan fill="#c9bee8">, 72.1% less.   Last request </tspan><tspan font-weight="bold">6,338 to 1,163</tspan><tspan fill="#c9bee8">, 81.7% less.</tspan></text>
+</svg>

@@ -1,6 +1,6 @@
 """Regenerate this repo's visual assets (banner, flow, benchmark chart).
 
-PNGs are drawn with PIL (DejaVu fonts) from the same layout constants as the
+PNGs are drawn with PIL (Liberation fonts) from the same layout constants as the
 SVGs; the SVGs are the editable source. Requires Pillow (`pip install pillow`)
 and the benchmark JSON in benchmarks/results/ (produced by the benchmark
 harness -- see benchmarks/README.md).
@@ -184,32 +184,143 @@ def flow_svg(cfg):
 '''
 
 
+# ---------------------------------------------------------------- charts
+# Design, 2026-11-24 (Impeccable + antislop during + UI/UX Pro Max):
+# Reading: README data charts for developers judging a context engine, in
+# each repo's established dark identity (Hermes purple/amber, Orca teal/cyan).
+# Dials ENERGY 2 / RHYTHM 2 / MOTION 1 (static images). One focal point per
+# chart: Hermes, the widening gap between a rising line and a flat one;
+# Orca, the large bar meeting the budget cap. Series are told apart by line
+# style, markers, and direct labels, never by hue alone (Pro Max chart
+# guidance). Numbers are only the measured values in the benchmark JSON.
+# No em dashes anywhere in chart copy (antislop R-02). Palette: two core
+# colors plus one accent per chart (R-29). Mono is used for measured figures
+# only, not as a technical costume. The takeaway is the title; there is no
+# eyebrow label above it (Impeccable craft floor).
+
+LIB = "/usr/share/fonts/truetype/liberation"
+
+
+def _f(name, size):
+    return ImageFont.truetype(f"{LIB}/{name}.ttf", size)
+
+
+FSANS = lambda s: _f("LiberationSans-Regular", s)  # noqa: E731
+FSANS_B = lambda s: _f("LiberationSans-Bold", s)  # noqa: E731
+FMONO = lambda s: _f("LiberationMono-Regular", s)  # noqa: E731
+FMONO_B = lambda s: _f("LiberationMono-Bold", s)  # noqa: E731
+
+CH_W, CH_H = 1500, 660
+
+
+def _chart_base(cfg):
+    img = vgrad(CH_W, CH_H, cfg["bg_top"], cfg["bg_bottom"])
+    d = ImageDraw.Draw(img, "RGBA")
+    d.text((90, 50), cfg["chart_title"], font=FSANS_B(36), fill=(255, 255, 255))
+    d.text((90, 100), cfg["chart_sub"], font=FSANS(20), fill=cfg["sub_color"])
+    return img, d
+
+
+def _segments(d, x, y, parts):
+    """Draw [(text, font, fill), ...] left to right on one baseline."""
+    for txt, fnt, fill in parts:
+        d.text((x, y), txt, font=fnt, fill=fill)
+        x += d.textlength(txt, font=fnt)
+    return x
+
+
+def _svg_esc(s):
+    from xml.sax.saxutils import escape as _esc
+    return _esc(s)
+
+
+def _chart_svg_head(cfg):
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="660" role="img" aria-label="{_svg_esc(cfg["chart_title"])}">'
+        f'<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">'
+        f'<stop offset="0" stop-color="{cfg["bg_top_hex"]}"/><stop offset="1" stop-color="{cfg["bg_bottom_hex"]}"/></linearGradient></defs>'
+        f'<rect width="1500" height="660" fill="url(#bg)"/>'
+        f'<text x="90" y="84" font-family="Liberation Sans, Arial, sans-serif" font-size="36" font-weight="bold" fill="#ffffff">{_svg_esc(cfg["chart_title"])}</text>'
+        f'<text x="90" y="122" font-family="Liberation Sans, Arial, sans-serif" font-size="20" fill="{cfg["sub_hex"]}">{_svg_esc(cfg["chart_sub"])}</text>'
+    )
+
+
 def hermes_chart(data):
-    W, H = 1500, 640
-    img = Image.new("RGB", (W, H), (255, 255, 255))
-    d = ImageDraw.Draw(img)
-    d.text((60, 28), "Per-request input tokens — native replay vs markdown-memory", font=F_BOLD(30), fill=(20, 20, 30))
-    d.text((60, 68), "20 turns × 3 requests  ·  tiktoken cl100k_base on captured messages  ·  2026-11-24", font=F_REG(21), fill=(90, 90, 110))
-    L, R, T, Bo = 110, 1440, 130, 520
+    cfg = HERMES
+    img, d = _chart_base(cfg)
+    L, R, T, Bo = 90, 1420, 180, 510
     ymax = 7000
-    def X(i): return L + (R - L) * i / 59
-    def Y(v): return Bo - (Bo - T) * v / ymax
-    for v in range(0, 7001, 1000):
-        d.line([(L, Y(v)), (R, Y(v))], fill=(230, 230, 235), width=1)
-        d.text((58, Y(v) - 11), f"{v:,}", font=F_REG(18), fill=(120, 120, 135))
-    for i in range(0, 60, 10):
-        d.text((X(i) - 12, Bo + 12), str(i + 1), font=F_REG(18), fill=(120, 120, 135))
-    nat = data["per_request"]["native_tokens"]; plu = data["per_request"]["plugin_tokens"]
-    for series, col, wd in ((nat, (214, 48, 49), 3), (plu, (16, 122, 87), 3)):
-        pts = [(X(i), Y(v)) for i, v in enumerate(series)]
-        d.line(pts, fill=col, width=wd, joint="curve")
-    d.text((R - 330, Y(nat[-1]) - 34), f"native, last: {nat[-1]:,} tokens", font=F_BOLD(20), fill=(214, 48, 49))
-    d.text((R - 330, Y(plu[-1]) + 16), f"plugin, last: {plu[-1]:,} tokens", font=F_BOLD(20), fill=(16, 122, 87))
-    # totals box
+    nat = data["per_request"]["native_tokens"]
+    plu = data["per_request"]["plugin_tokens"]
+
+    def X(i):
+        return L + (R - L) * i / 59
+
+    def Y(v):
+        return Bo - (Bo - T) * v / ymax
+
+    for v in (0, 2000, 4000, 6000):
+        d.line([(L, Y(v)), (R, Y(v))], fill=(255, 255, 255, 22), width=1)
+        d.text((78, Y(v) - 11), f"{v:,}", font=FMONO(18), fill=cfg["sub_color"], anchor="ra")
+    for i, lab in ((0, "1"), (19, "20"), (39, "40"), (59, "60")):
+        d.text((X(i), 526), lab, font=FMONO(18), fill=cfg["sub_color"], anchor="ma")
+    d.line([(X(i), Y(v)) for i, v in enumerate(plu)], fill=cfg["plugin_line"], width=4, joint="curve")
+    for i, v in enumerate(plu):
+        if i % 3 == 0:
+            d.ellipse([X(i) - 5, Y(v) - 5, X(i) + 5, Y(v) + 5], fill=cfg["plugin_line"])
+    d.line([(X(i), Y(v)) for i, v in enumerate(nat)], fill=cfg["accent"], width=4, joint="curve")
+    d.text((1410, Y(nat[-1]) - 42), f"Native {nat[-1]:,}", font=FSANS_B(22), fill=cfg["accent"], anchor="ra")
+    d.text((1410, Y(plu[-1]) + 18), f"Plugin {plu[-1]:,}", font=FSANS_B(22), fill=cfg["plugin_line"], anchor="ra")
+    d.line([(90, 566), (1420, 566)], fill=(255, 255, 255, 28), width=1)
     r = data["reduction"]
-    d.rounded_rectangle([60, 560, 1440, 616], radius=12, outline=(200, 200, 210), width=1)
-    d.text((84, 578), f"Total  {data['native']['total_tokens']:,}  →  {data['plugin']['total_tokens']:,} tokens   (−{r['total_tokens_pct']}%)      Last request  {nat[-1]:,}  →  {plu[-1]:,}   (−{r['last_request_tokens_pct']}%)", font=F_BOLD(22), fill=(20, 20, 30))
+    _segments(d, 90, 590, [
+        ("Total ", FSANS(22), (255, 255, 255)),
+        (f"{data['native']['total_tokens']:,} to {data['plugin']['total_tokens']:,} tokens", FSANS_B(22), (255, 255, 255)),
+        (f", {r['total_tokens_pct']}% less.   Last request ", FSANS(22), cfg["sub_color"]),
+        (f"{nat[-1]:,} to {plu[-1]:,}", FSANS_B(22), (255, 255, 255)),
+        (f", {r['last_request_tokens_pct']}% less.", FSANS(22), cfg["sub_color"]),
+    ])
     return img
+
+
+def hermes_chart_svg(data):
+    cfg = HERMES
+    L, R, T, Bo = 90, 1420, 180, 510
+    ymax = 7000
+    nat = data["per_request"]["native_tokens"]
+    plu = data["per_request"]["plugin_tokens"]
+
+    def X(i):
+        return L + (R - L) * i / 59
+
+    def Y(v):
+        return Bo - (Bo - T) * v / ymax
+
+    out = [_chart_svg_head(cfg)]
+    for v in (0, 2000, 4000, 6000):
+        out.append(f'<line x1="{L}" y1="{Y(v):.1f}" x2="{R}" y2="{Y(v):.1f}" stroke="#ffffff" stroke-opacity="0.12"/>')
+        out.append(f'<text x="78" y="{Y(v) + 6:.1f}" font-family="monospace" font-size="18" fill="{cfg["sub_hex"]}" text-anchor="end">{v:,}</text>')
+    for i, lab in ((0, "1"), (19, "20"), (39, "40"), (59, "60")):
+        out.append(f'<text x="{X(i):.1f}" y="542" font-family="monospace" font-size="18" fill="{cfg["sub_hex"]}" text-anchor="middle">{lab}</text>')
+    pts_p = " ".join(f"{X(i):.1f},{Y(v):.1f}" for i, v in enumerate(plu))
+    pts_n = " ".join(f"{X(i):.1f},{Y(v):.1f}" for i, v in enumerate(nat))
+    out.append(f'<polyline points="{pts_p}" fill="none" stroke="{cfg["plugin_line_hex"]}" stroke-width="4" stroke-linejoin="round"/>')
+    for i, v in enumerate(plu):
+        if i % 3 == 0:
+            out.append(f'<circle cx="{X(i):.1f}" cy="{Y(v):.1f}" r="5" fill="{cfg["plugin_line_hex"]}"/>')
+    out.append(f'<polyline points="{pts_n}" fill="none" stroke="{cfg["accent_hex"]}" stroke-width="4" stroke-linejoin="round"/>')
+    out.append(f'<text x="1410" y="{Y(nat[-1]) - 16:.1f}" font-family="Liberation Sans, Arial, sans-serif" font-size="22" font-weight="bold" fill="{cfg["accent_hex"]}" text-anchor="end">Native {nat[-1]:,}</text>')
+    out.append(f'<text x="1410" y="{Y(plu[-1]) + 40:.1f}" font-family="Liberation Sans, Arial, sans-serif" font-size="22" font-weight="bold" fill="{cfg["plugin_line_hex"]}" text-anchor="end">Plugin {plu[-1]:,}</text>')
+    out.append('<line x1="90" y1="566" x2="1420" y2="566" stroke="#ffffff" stroke-opacity="0.15"/>')
+    r = data["reduction"]
+    out.append(
+        f'<text x="90" y="612" font-family="Liberation Sans, Arial, sans-serif" font-size="22" fill="#ffffff">Total '
+        f'<tspan font-weight="bold">{data["native"]["total_tokens"]:,} to {data["plugin"]["total_tokens"]:,} tokens</tspan>'
+        f'<tspan fill="{cfg["sub_hex"]}">, {r["total_tokens_pct"]}% less.   Last request </tspan>'
+        f'<tspan font-weight="bold">{nat[-1]:,} to {plu[-1]:,}</tspan>'
+        f'<tspan fill="{cfg["sub_hex"]}">, {r["last_request_tokens_pct"]}% less.</tspan></text>')
+    out.append("</svg>")
+    return "\n".join(out) + "\n"
 
 
 HERMES = {
@@ -217,17 +328,25 @@ HERMES = {
     "accent": (245, 165, 36), "accent2": (139, 92, 246), "sub_color": (201, 190, 232), "muted": (143, 131, 184),
     "pill": "MARKDOWN-MEMORY  ·  HERMES AGENT PLUGIN",
     "line1": "Keep the work.", "line2": "Bound the replay.",
-    "sub": "File-backed context engine: old turns become", "sub2": "a compact digest — requests stay constant-size.",
-    "card_title": "state.md — rolling working state",
+    "sub": "File-backed context engine: old turns become", "sub2": "a compact digest, requests stay constant-size.",
+    "card_title": "state.md: rolling working state",
     "card_lines": [("## Goal", "#E8E2F5"), ("### Turn 18  (2026-11-24 10:02)", "#C9BEE8"), ("User: …  Tools used: run_checks", "#C9BEE8"), ("### Turn 19  (2026-11-24 10:04)", "#C9BEE8"), ("### Turn 20  (2026-11-24 10:05)", "#C9BEE8")],
     "card_foot": "4,000 chars max · last 8 turns",
     "url": "github.com/ivanbayuf/markdown-memory-hermes",
     "aria": "markdown-memory-hermes banner: keep the work, bound the replay",
     "title": "How a request flows through markdown-memory-hermes",
-    "subtitle": "Deterministic text processing — no extra LLM call. The session database is never modified.",
+    "subtitle": "Deterministic text processing, no extra LLM call. The session database is never modified.",
     "boxes": [("Native transcript", "grows every turn"), ("select_context", "swap history for digest"), ("Model request", "system + digest + current turn")],
     "row2": [("on_turn_complete", "record the finished turn"), ("state.md · transcript.md", "rolling digest · append-only archive"), ("context_recall", "search the archive on demand")],
-    "elbow_label": "turn finishes → record it",
+        "elbow_label": "turn finishes → record it",
+    "chart_title": "Native replay grows. The digest stays flat.",
+    "chart_sub": "Input tokens per request, 20 turns x 3 requests. tiktoken cl100k_base on captured messages, 2026-11-24.",
+    "plugin_line": (183, 166, 232),
+    "plugin_line_hex": "#B7A6E8",
+    "accent_hex": "#F5A524",
+    "bg_top_hex": "#1B1035",
+    "bg_bottom_hex": "#2E184E",
+    "sub_hex": "#C9BEE8",
 }
 HEX = lambda t: "#%02x%02x%02x" % t
 
@@ -246,6 +365,7 @@ def main():
     (assets / "flow.svg").write_text(flow_svg(HERMES))
     data = json.loads((root / "benchmarks" / "results" / "hermes-2026-11-24.json").read_text())
     hermes_chart(data).save(assets / "benchmark-chart.png")
+    (assets / "benchmark-chart.svg").write_text(hermes_chart_svg(data))
     print("assets written to", assets)
 
 
