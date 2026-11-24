@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="560" role="img" aria-label="How a request flows through markdown-memory-hermes">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b1035"/><stop offset="1" stop-color="#2e184e"/></linearGradient>
+<marker id="ah" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 z" fill="#f5a524"/></marker>
+<marker id="ah2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 z" fill="#8b5cf6"/></marker></defs>
+<rect width="1500" height="560" fill="url(#bg)"/>
+<text x="40" y="58" font-family="sans-serif" font-size="32" font-weight="bold" fill="#ffffff">How a request flows through markdown-memory-hermes</text>
+<text x="40" y="90" font-family="sans-serif" font-size="21" fill="#c9bee8">Deterministic text processing, no extra LLM call. The session database is never modified.</text>
+<rect x="40" y="130" width="320" height="120" rx="16" fill="#ffffff" fill-opacity="0.05" stroke="#f5a524" stroke-width="2"/><text x="62" y="174" font-family="sans-serif" font-size="24" font-weight="bold" fill="#ffffff">Native transcript</text><text x="62" y="212" font-family="sans-serif" font-size="19" fill="#c8c8d7">grows every turn</text>
+<rect x="480" y="130" width="320" height="120" rx="16" fill="#ffffff" fill-opacity="0.05" stroke="#f5a524" stroke-width="2"/><text x="502" y="174" font-family="sans-serif" font-size="24" font-weight="bold" fill="#ffffff">select_context</text><text x="502" y="212" font-family="sans-serif" font-size="19" fill="#c8c8d7">swap history for digest</text>
+<rect x="920" y="130" width="540" height="120" rx="16" fill="#ffffff" fill-opacity="0.05" stroke="#f5a524" stroke-width="2"/><text x="942" y="174" font-family="sans-serif" font-size="24" font-weight="bold" fill="#ffffff">Model request</text><text x="942" y="212" font-family="sans-serif" font-size="19" fill="#c8c8d7">system + digest + current turn</text>
+<rect x="40" y="350" width="320" height="120" rx="16" fill="#ffffff" fill-opacity="0.05" stroke="#8b5cf6" stroke-width="2"/><text x="62" y="394" font-family="sans-serif" font-size="24" font-weight="bold" fill="#ffffff">on_turn_complete</text><text x="62" y="432" font-family="sans-serif" font-size="19" fill="#c8c8d7">record the finished turn</text>
+<rect x="480" y="350" width="320" height="120" rx="16" fill="#ffffff" fill-opacity="0.05" stroke="#8b5cf6" stroke-width="2"/><text x="502" y="394" font-family="sans-serif" font-size="24" font-weight="bold" fill="#ffffff">state.md · transcript.md</text><text x="502" y="432" font-family="sans-serif" font-size="19" fill="#c8c8d7">rolling digest · append-only archive</text>
+<rect x="920" y="350" width="540" height="120" rx="16" fill="#ffffff" fill-opacity="0.05" stroke="#8b5cf6" stroke-width="2"/><text x="942" y="394" font-family="sans-serif" font-size="24" font-weight="bold" fill="#ffffff">context_recall</text><text x="942" y="432" font-family="sans-serif" font-size="19" fill="#c8c8d7">search the archive on demand</text>
+<line x1="360" y1="190" x2="468" y2="190" stroke="#f5a524" stroke-width="3" marker-end="url(#ah)"/>
+<line x1="800" y1="190" x2="908" y2="190" stroke="#f5a524" stroke-width="3" marker-end="url(#ah)"/>
+<path d="M1400,250 L1400,300 L200,300 L200,338" fill="none" stroke="#f5a524" stroke-width="3" marker-end="url(#ah)"/>
+<text x="1050" y="290" font-family="sans-serif" font-size="19" fill="#f5a524">turn finishes → record it</text>
+<line x1="360" y1="410" x2="468" y2="410" stroke="#8b5cf6" stroke-width="3" marker-end="url(#ah2)"/>
+<line x1="800" y1="410" x2="908" y2="410" stroke="#8b5cf6" stroke-width="3" marker-end="url(#ah2)"/>
+</svg>

@@ -270,7 +270,12 @@ class MarkdownMemoryEngine(_ContextEngineBase):
     def on_session_reset(self) -> None:
         # /new or /reset: the engine keeps its files (history is durable), but the
         # in-memory frozen digest is dropped; a fresh state file begins on demand.
+        # The turn counter is reset too: with the digest gone, select_context()
+        # must pass requests through unchanged until a new turn is recorded.
+        # (Previously only the digest was cleared, so a reset session could have
+        # its history replaced by a placeholder digest.)
         self._digest = ""
+        self._turn_counter = 0
 
     # ------------------------------------------------------------- token API
     def update_from_response(self, usage: Dict[str, Any]) -> None:
@@ -317,9 +322,10 @@ class MarkdownMemoryEngine(_ContextEngineBase):
     def _select(self, request_messages: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
         if not request_messages:
             return None
-        # Safety net: NEVER replace history with an empty digest. A pre-engine
-        # session (or one whose recording failed) must fall back to native context.
-        if not self._digest.strip() and self._turn_counter <= 0:
+        # Safety net: NEVER replace history with an empty digest — a pre-engine
+        # session, a session whose recording failed, or one just reset must fall
+        # back to native context (no placeholder digest).
+        if not self._digest.strip():
             return None
         last_user_idx: Optional[int] = None
         for i, msg in enumerate(request_messages):

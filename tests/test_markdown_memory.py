@@ -90,7 +90,7 @@ class TestSelection:
         assert roles == ["system", "user", "user", "assistant", "tool", "assistant"]
         assert sel[0]["content"] == "You are helpful."
         # Old history is gone.
-        assert not any("a.txt" in (m.get("content") or "") for m in sel if m["role"] == "user" and "working state" not in (m.get("content") or "")[:40])
+        assert not any("a.txt" in (m.get("content") or "") for m in sel if m["role"] == "user" and "earlier turns archived" not in (m.get("content") or "")[:45])
         # Current turn intact.
         assert sel[2] is turn2_user or sel[2]["content"] == "Now compare them."
         assert any(m.get("tool_call_id") == "c9" for m in sel)
@@ -103,7 +103,7 @@ class TestSelection:
             {"role": "user", "content": "turn 3"},
         ])
         digest = sel[1]["content"]
-        assert digest.startswith("[markdown-memory working state")
+        assert digest.startswith("[markdown-memory: earlier turns archived to disk")
         assert "What is in a.txt and b.txt?" in digest
         assert "a.txt has alpha, b.txt has beta." in digest
 
@@ -380,3 +380,47 @@ class TestContract:
     def test_engine_is_context_engine_subclass(self, engine_mod, engine):
         from agent.context_engine import ContextEngine
         assert isinstance(engine, ContextEngine)
+
+
+# ------------------------------------------------------- regressions 2026-11-24
+class TestRegressions20261124:
+    def test_write_state_keeps_turn_headings(self, engine_mod, tmp_path):
+        """_write_state used to strip the '### Turn ' delimiter when rolling
+        state.md, so only the newest turn kept its heading."""
+        e = engine_mod.MarkdownMemoryEngine()
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        for i in (1, 2, 3):
+            e.on_turn_complete([
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": f"question {i}"},
+                {"role": "assistant", "content": f"answer {i}"},
+            ])
+        state = (tmp_path / "context-memory" / "s" / "state.md").read_text()
+        assert state.count("### Turn ") == 3
+        assert "### Turn 1\n" in state and "### Turn 2\n" in state and "### Turn 3\n" in state
+
+    def test_reset_does_not_replace_history(self, engine):
+        """After on_session_reset, select_context must pass the request through
+        unchanged (never substitute a placeholder digest for real history)."""
+        engine.on_session_reset()
+        req = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "What is in a.txt and b.txt?"},
+            {"role": "assistant", "content": "a.txt has alpha."},
+            {"role": "user", "content": "And now?"},
+        ]
+        assert engine.select_context(copy.deepcopy(req)) is None
+
+    def test_empty_digest_never_replaces_history(self, engine_mod, tmp_path):
+        """Even with a nonzero turn counter, an empty digest means passthrough."""
+        e = engine_mod.MarkdownMemoryEngine()
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        e._turn_counter = 3
+        e._digest = ""
+        req = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "second"},
+        ]
+        assert e.select_context(copy.deepcopy(req)) is None
