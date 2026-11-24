@@ -1,6 +1,6 @@
 # markdown-memory-hermes
 
-![Project banner](assets/banner.svg)
+![Project banner](assets/banner.png)
 
 ## The context
 
@@ -20,7 +20,7 @@ In our benchmark, a 20-turn session where each turn makes 3 requests sent **194,
 
 markdown-memory — a context engine plugin that swaps pre-turn history for a compact, file-backed working state. All deterministic text processing, no LLM summarisation, works with any model Hermes can drive. It cuts at three seams:
 
-![Request, recording, and recall flow](assets/flow.svg)
+![Request, recording, and recall flow](assets/flow.png)
 
 | Seam | When | What it does |
 |---|---|---|
@@ -38,7 +38,7 @@ Full mechanics, file formats, and known limits: [docs/HOW_IT_WORKS.md](docs/HOW_
 
 Reproducible synthetic benchmark — 20 turns × 3 requests per turn, tiktoken `cl100k_base` on the captured messages, harness in `benchmarks/`:
 
-![Per-request input tokens](assets/benchmark-chart.svg)
+![Per-request input tokens](assets/benchmark-chart.png)
 
 | | Native replay | With markdown-memory |
 |---|---|---|

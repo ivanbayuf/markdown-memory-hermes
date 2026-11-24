@@ -2,7 +2,7 @@
 
 ## Measured 2026-11-24 (reproducible, synthetic fixture)
 
-![Per-request input tokens](../assets/benchmark-chart.svg)
+![Per-request input tokens](../assets/benchmark-chart.png)
 
 Harness: `benchmarks/bench_hermes.py` (fixture seed `20261124`,
 `benchmarks/results/hermes-2026-11-24.json` (per-request values included).

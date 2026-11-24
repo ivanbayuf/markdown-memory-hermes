@@ -1,6 +1,6 @@
 # How markdown-memory-hermes works
 
-![Request, recording, and recall flow](../assets/flow.svg)
+![Request, recording, and recall flow](../assets/flow.png)
 
 A Hermes Agent context-engine plugin. Hermes natively replays the full
 conversation transcript on every LLM request, so input tokens grow with chat
