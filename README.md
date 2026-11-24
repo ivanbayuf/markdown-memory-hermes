@@ -1,4 +1,4 @@
-# markdown-memory
+# markdown-memory-hermes
 
 A context engine plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that makes long-running agent conversations cost-efficient: instead of re-sending the entire accumulated chat history on every API call, it swaps old history for a compact, file-backed working state.
 
