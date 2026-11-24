@@ -2,13 +2,25 @@
 
 ![Project banner](assets/banner.svg)
 
-A context engine plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that makes long-running agent conversations cost-efficient: instead of re-sending the entire accumulated chat history on every API call, it swaps old history for a compact, file-backed working state. Works with any model Hermes can drive (OpenAI, Anthropic, Gemini, GLM, DeepSeek, local models) — the engine only reshapes the request payload; it never touches model configuration.
+## The context
 
-## How it works
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) is built for long-running conversations: one session keeps working across hours, days, even weeks. But its context engine replays the **entire** accumulated chat history on every single API call — so a session that feels normal to you becomes an enormous bill.
+
+## The problem
+
+Input tokens grow linearly with chat length, and the growth compounds:
+
+- Every request re-sends turns you never need again — past tool dumps, old drafts, resolved debugging.
+- It gets worse on multi-tool turns: retries and tool-rounds replay the full transcript again each time.
+- And the bigger the history, the more the problem repeats on every request, every turn.
+
+In our benchmark, a 20-turn session where each turn makes 3 requests sent **194,565 input tokens natively** — and the last request alone was 6,338 tokens, all of it history that had nothing to do with what the user just asked.
+
+## The solution
+
+markdown-memory — a context engine plugin that swaps pre-turn history for a compact, file-backed working state. All deterministic text processing, no LLM summarisation, works with any model Hermes can drive. It cuts at three seams:
 
 ![Request, recording, and recall flow](assets/flow.svg)
-
-Hermes natively replays the full transcript on every LLM request, so input tokens grow with chat length. This engine cuts at three seams — all deterministic text processing, no LLM summarisation:
 
 | Seam | When | What it does |
 |---|---|---|
@@ -22,7 +34,7 @@ Fail-open by design: a session without memory files passes through unchanged, an
 
 Full mechanics, file formats, and known limits: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)
 
-## The evidence
+## The impact
 
 Reproducible synthetic benchmark — 20 turns × 3 requests per turn, tiktoken `cl100k_base` on the captured messages, harness in `benchmarks/`:
 
@@ -37,7 +49,7 @@ Native per-request size grows linearly with chat length; the plugin's stays flat
 
 Honest scope: tokens counted with a pinned tokenizer on captured messages, not provider-billed usage; the fixture is synthetic, so the percentage will move on real conversations; longer sessions help more (native keeps growing, the digest does not). Methodology, per-request values, and the retired 306k → 59k claim that this benchmark **replaced because it was not reproducible**: [docs/BENCHMARKS.md](docs/BENCHMARKS.md)
 
-## Where it sits in a token-reduction stack
+### Where it sits in a token-reduction stack
 
 | Layer | Tool | What it cuts | When |
 |---|---|---|---|
