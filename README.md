@@ -1,5 +1,9 @@
 # markdown-memory-hermes
 
+![Project banner](assets/banner.svg)
+
+[How it works](docs/HOW_IT_WORKS.md) · [Benchmark evidence](docs/BENCHMARKS.md) · [RTK and Graphify comparison](docs/COMPARISON.md)
+
 A context engine plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that makes long-running agent conversations cost-efficient: instead of re-sending the entire accumulated chat history on every API call, it swaps old history for a compact, file-backed working state.
 
 Works with any model Hermes can drive (OpenAI, Anthropic, Gemini, GLM, DeepSeek, local models — the engine only reshapes the request payload; it never touches model configuration).
@@ -19,7 +23,7 @@ Long agent sessions become expensive and slow: a chat that runs for days can gro
 
 Make per-request context size **constant** instead of growing with conversation age — without losing durability. All native session history stays intact in Hermes' session database (the plugin is strictly read-only against it); anything dropped from a request is archived to disk and recoverable with `context_recall`.
 
-## • Impact
+## • Reported impact (not independently reproduced for this update)
 
 Benchmarked on a real multi-turn, multi-round-tool conversation (20 turns × 3 API calls): **~81% fewer input tokens** (306k → 59k estimated), with per-request size no longer growing over time (10.2k → 1.4k tokens on the last request vs native). Request size becomes independent of chat length, and giant context stall-retry loops (which re-bill the full payload per retry) disappear.
 
