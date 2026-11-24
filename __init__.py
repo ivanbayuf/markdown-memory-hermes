@@ -172,7 +172,15 @@ class MarkdownMemoryEngine(_ContextEngineBase):
     def on_session_reset(self) -> None:
         # /new or /reset: the engine keeps its files (history is durable), but the
         # in-memory frozen digest is dropped; a fresh state file begins on demand.
+        # The turn counter is reset too: with the digest gone, select_context()
+        # must pass requests through unchanged until a new turn is recorded.
+        # (Previously only the digest was cleared, so a reset session could have
+        # its history replaced by a placeholder digest. Fixed 2026-11-24.)
+        # Note: turn numbers in transcript.md restart at 1 after a reset; the
+        # archive count is reconciled by _count_archived_turns() on the next
+        # on_session_start().
         self._digest = ""
+        self._turn_counter = 0
 
     # ------------------------------------------------------------- token API
     def update_from_response(self, usage: Dict[str, Any]) -> None:
@@ -220,8 +228,12 @@ class MarkdownMemoryEngine(_ContextEngineBase):
         if not request_messages:
             return None
         # Safety net: NEVER replace history with an empty digest. A pre-engine
-        # session (or one whose recording failed) must fall back to native context.
-        if not self._digest.strip() and self._turn_counter <= 0:
+        # session (or one whose recording failed, or one just reset) must fall
+        # back to native context. There is deliberately no placeholder digest:
+        # an earlier version substituted "(no prior context recorded...)" here,
+        # which discarded real history after on_session_reset() cleared the
+        # digest while the turn counter stayed > 0 (fixed 2026-11-24).
+        if not self._digest.strip():
             return None
         last_user_idx: Optional[int] = None
         for i, msg in enumerate(request_messages):
@@ -237,7 +249,7 @@ class MarkdownMemoryEngine(_ContextEngineBase):
                 head.append(msg)
             else:
                 break
-        digest = self._digest.strip() or "(no prior context recorded for this session yet)"
+        digest = self._digest.strip()
         digest_msg = {"role": "user", "content": DIGEST_PREFIX + digest}
         return [*head, digest_msg, *request_messages[last_user_idx:]]
 
@@ -376,8 +388,14 @@ class MarkdownMemoryEngine(_ContextEngineBase):
                 user_line = m.group(1)
             goal = _clip(user_line, 300)
         # Keep only the most recent N turn sections from the previous digest.
+        # NOTE: _TURN_SECTION_RE.split() discards the "### Turn " delimiter, so
+        # each kept section must get its heading back -- otherwise older turns
+        # lose their headings on every rewrite and the rolling cap stops
+        # counting turns (fixed 2026-11-24; see test_write_state_keeps_headings).
+        # Re-adding the heading also repairs state files degraded by the old
+        # bug, whose sections look like "1 (2026-...)" without a heading.
         old_turns = _TURN_SECTION_RE.split(existing.split("## Recent turns", 1)[-1]) if "## Recent turns" in existing else []
-        old_turns = [t for t in old_turns if t.strip()]
+        old_turns = ["### Turn " + t for t in old_turns if t.strip()]
         kept = old_turns[-(self.max_recent_turns - 1):]
         header = (
             "# Working state (markdown-memory)\n"

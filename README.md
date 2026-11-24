@@ -21,11 +21,24 @@ Long agent sessions become expensive and slow: a chat that runs for days can gro
 
 ## • Goal
 
-Make per-request context size **constant** instead of growing with conversation age — without losing durability. All native session history stays intact in Hermes' session database (the plugin is strictly read-only against it); anything dropped from a request is archived to disk and recoverable with `context_recall`.
+Make the digest contribution to per-request context size **constant** instead of growing with conversation age — without losing durability. (The current turn is still sent verbatim, so a very large turn still makes a large request.) All native session history stays intact in Hermes' session database (the plugin is strictly read-only against it); anything dropped from a request is archived to disk and recoverable with `context_recall`.
 
-## • Reported impact (not independently reproduced for this update)
+## • Impact (measured 2026-11-24)
 
-Benchmarked on a real multi-turn, multi-round-tool conversation (20 turns × 3 API calls): **~81% fewer input tokens** (306k → 59k estimated), with per-request size no longer growing over time (10.2k → 1.4k tokens on the last request vs native). Request size becomes independent of chat length, and giant context stall-retry loops (which re-bill the full payload per retry) disappear.
+Reproducible synthetic benchmark — 20 turns × 3 requests, tiktoken
+`cl100k_base` on the captured messages, harness in `benchmarks/`:
+**194,565 → 54,204 input tokens (−72.1%)**, last request 6,338 → 1,163
+(−81.7%). The digest stays flat once it exists; native replay grows
+linearly. Full numbers, chart, and reproduction steps:
+[Benchmark evidence](docs/BENCHMARKS.md).
+
+Previously this section reported a real conversation at ~81% (306k → 59k
+estimated, last request 10.2k → 1.4k). That figure is **not reproduced** — no
+fixture or payloads for it exist in the repo — and is kept only as a prior
+author-reported estimate in `docs/BENCHMARKS.md`. The digest is capped, but a
+turn with huge tool results still makes a large request, so "request size
+becomes independent of chat length" now reads: *the digest contribution*
+is independent of chat length.
 
 ## Where it sits in a token-reduction stack
 
@@ -63,7 +76,7 @@ markdown-memory is one of three complementary token-reduction layers. They cut c
 
 ```bash
 # 1. Copy the plugin into your Hermes plugins directory
-cp -r markdown-memory ~/.hermes/plugins/
+cp -r markdown-memory-hermes ~/.hermes/plugins/
 
 # 2. Select it in config.yaml
 context:

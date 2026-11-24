@@ -380,3 +380,47 @@ class TestContract:
     def test_engine_is_context_engine_subclass(self, engine_mod, engine):
         from agent.context_engine import ContextEngine
         assert isinstance(engine, ContextEngine)
+
+
+# ------------------------------------------------------- regressions 2026-11-24
+class TestRegressions20261124:
+    def test_write_state_keeps_turn_headings(self, engine_mod, tmp_path):
+        """_write_state used to strip the '### Turn ' delimiter when rolling
+        state.md, so only the newest turn kept its heading."""
+        e = engine_mod.MarkdownMemoryEngine()
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        for i in (1, 2, 3):
+            e.on_turn_complete([
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": f"question {i}"},
+                {"role": "assistant", "content": f"answer {i}"},
+            ])
+        state = (tmp_path / "context-memory" / "s" / "state.md").read_text()
+        assert state.count("### Turn ") == 3
+        assert "### Turn 1 " in state and "### Turn 2 " in state and "### Turn 3 " in state
+
+    def test_reset_does_not_replace_history(self, engine):
+        """After on_session_reset, select_context must pass the request through
+        unchanged (never substitute a placeholder digest for real history)."""
+        engine.on_session_reset()
+        req = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "What is in a.txt and b.txt?"},
+            {"role": "assistant", "content": "a.txt has alpha."},
+            {"role": "user", "content": "And now?"},
+        ]
+        assert engine.select_context(copy.deepcopy(req)) is None
+
+    def test_empty_digest_never_replaces_history(self, engine_mod, tmp_path):
+        """Even with a nonzero turn counter, an empty digest means passthrough."""
+        e = engine_mod.MarkdownMemoryEngine()
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        e._turn_counter = 3
+        e._digest = ""
+        req = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "second"},
+        ]
+        assert e.select_context(copy.deepcopy(req)) is None
