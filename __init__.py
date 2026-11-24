@@ -39,6 +39,7 @@ import logging
 import os
 import re
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -65,11 +66,108 @@ except Exception:  # pragma: no cover - import-environment safety net
 
 
 DIGEST_PREFIX = (
-    "[markdown-memory working state — earlier conversation was archived to disk "
-    "and replaced here. Prior details are recoverable with the context_recall tool.]\n\n"
+    "[markdown-memory: earlier turns archived to disk; recover via context_recall.]\n\n"
 )
 
-_TURN_SECTION_RE = re.compile(r"^### Turn ", re.MULTILINE)
+# Splitting on a zero-width lookahead keeps the "### Turn N" heading attached
+# to each kept turn section (a consuming split stripped headings from old turns).
+_TURN_SECTION_RE = re.compile(r"(?m)^(?=### Turn )")
+
+_STOPWORDS = frozenset(
+    "the a an and or of to in on for with is are was were be been being it its this "
+    "that these those i you my your we our not no do does did done don doesn what how "
+    "why when where which who whom so if then than there here at as by from but can "
+    "could will would should may might just have has had about into out up down over "
+    "under more most some any all also very much many now new one two first next last "
+    "want need like get got put use used using make made run ran okay yes yeah let lets "
+    "them their they he she his her him its itself are was were am been ok im ive dont "
+    "cant wont theres whatre that's it's i'm you're we're".split()
+)
+
+
+def _keywords(text: str, limit: int = 8) -> str:
+    """Deterministic keyword extraction: frequent non-stopword tokens."""
+    words = re.findall(r"[a-zA-Z][a-zA-Z0-9_\-]{2,}", (text or "").lower())
+    counts = Counter(w for w in words if w not in _STOPWORDS)
+    return ", ".join(w for w, _ in counts.most_common(limit))
+
+
+def _scan_archive(text: str) -> List[Dict[str, Any]]:
+    """Map every archived turn to its transcript.md line range.
+
+    Only real ``## Turn N`` headings delimit turns; ``#### Turn N — completion``
+    blocks (bootstrap reconcile) are merged into turn N wherever they appear.
+    Returns a list of dicts: {no, start, end, heading, user, assistant, completion}.
+    ``start``/``end`` are 1-based transcript.md line numbers (end inclusive).
+    """
+    lines = text.splitlines()
+    turns: Dict[int, Dict[str, Any]] = {}
+    order: List[int] = []
+    current: Optional[Dict[str, Any]] = None
+    for lineno, raw in enumerate(lines, start=1):
+        m = re.match(r"^## Turn (\d+) — (.*?) — status: (\S+)", raw)
+        if m:
+            current = {"no": int(m.group(1)), "heading": raw, "start": lineno,
+                       "end": lineno, "user": "", "assistant": "",
+                       "extra_headings": []}
+            turns[current["no"]] = current
+            order.append(current["no"])
+            continue
+        m = re.match(r"^#### Turn (\d+) — completion", raw)
+        if m and int(m.group(1)) in turns:
+            turns[int(m.group(1))]["extra_headings"].append((lineno, raw))
+        if current is None:
+            continue
+        current["end"] = lineno
+        if raw.startswith("USER: ") and not current["user"]:
+            current["user"] = raw[len("USER: "):]
+        elif raw.startswith("ASSISTANT: "):
+            current["assistant"] = raw[len("ASSISTANT: "):] or current["assistant"]
+    return [turns[no] for no in order]
+
+
+def build_index(session_dir: Path) -> str:
+    """(Re)build index.md from transcript.md; return the index text.
+
+    One entry per archived turn: heading, first user line, last assistant line,
+    keywords, and the exact transcript.md line range for pinpoint reading.
+    Deterministic — same transcript always yields the same index.
+    """
+    transcript_path = Path(session_dir) / "transcript.md"
+    try:
+        text = transcript_path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+    session_id = ""
+    m = re.search(r"^# Transcript archive — session (.*)$", text, re.MULTILINE)
+    if m:
+        session_id = m.group(1).strip()
+    entries = _scan_archive(text)
+    out = [
+        "# Index — session " + (session_id or "unknown"),
+        "Compact map of transcript.md. Find a topic here, then read the cited",
+        "transcript.md lines (or context_recall turn=N for the full block).",
+        f"Updated: {time.strftime('%Y-%m-%d %H:%M:%S')} — turns: {len(entries)}",
+        "",
+    ]
+    for e in entries:
+        block_text = "\n".join(text.splitlines()[e["start"] - 1:e["end"]])
+        out.append(
+            f"### Turn {e['no']} — transcript.md lines {e['start']}-{e['end']}"
+            + (f" (+{len(e['extra_headings'])} completion block(s))" if e["extra_headings"] else "")
+        )
+        heading_m = re.match(r"^## Turn \d+ — (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) — status: (\S+)", e["heading"])
+        when, status = (heading_m.group(1), heading_m.group(2)) if heading_m else ("?", "?")
+        out.append(f"when: {when} | status: {status}")
+        out.append(f"User: {_clip(e['user'], 200)}")
+        out.append(f"Assistant: {_clip(e['assistant'], 200)}")
+        out.append(f"Keywords: {_keywords(block_text)}")
+        out.append("")
+    index_text = "\n".join(out).rstrip() + "\n"
+    tmp = Path(session_dir) / "index.md.tmp"
+    tmp.write_text(index_text, encoding="utf-8")
+    os.replace(tmp, Path(session_dir) / "index.md")
+    return index_text
 
 
 def _flatten(content: Any) -> str:
@@ -113,10 +211,10 @@ class MarkdownMemoryEngine(_ContextEngineBase):
     def __init__(
         self,
         *,
-        max_state_chars: int = 4000,
+        max_state_chars: int = 2400,
         max_recent_turns: int = 8,
-        turn_user_chars: int = 300,
-        turn_assistant_chars: int = 500,
+        turn_user_chars: int = 200,
+        turn_assistant_chars: int = 300,
         archive_msg_chars: int = 2000,
     ):
         self.max_state_chars = max_state_chars
@@ -227,8 +325,7 @@ class MarkdownMemoryEngine(_ContextEngineBase):
         for i, msg in enumerate(request_messages):
             if isinstance(msg, dict) and msg.get("role") == "user":
                 last_user_idx = i
-        if last_user_idx is None or last_user_idx <= 1:
-            # First request of the session (system [+ one message]): nothing to trim.
+        if last_user_idx is None:
             return None
         # Leading system message(s) are always preserved.
         head: List[Dict[str, Any]] = []
@@ -237,6 +334,14 @@ class MarkdownMemoryEngine(_ContextEngineBase):
                 head.append(msg)
             else:
                 break
+        if last_user_idx <= 1:
+            # First request of the session (system [+ one message]): nothing to
+            # trim, BUT on a resumed session the loaded digest must still be
+            # injected — otherwise prior context is silently lost (P3-10).
+            if not self._digest.strip():
+                return None
+            digest_msg = {"role": "user", "content": DIGEST_PREFIX + self._digest.strip()}
+            return [*head, digest_msg, *request_messages[last_user_idx:]]
         digest = self._digest.strip() or "(no prior context recorded for this session yet)"
         digest_msg = {"role": "user", "content": DIGEST_PREFIX + digest}
         return [*head, digest_msg, *request_messages[last_user_idx:]]
@@ -271,8 +376,7 @@ class MarkdownMemoryEngine(_ContextEngineBase):
         start, window = self._current_turn_window(messages)
         if not window:
             return
-        self._turn_counter += 1
-        turn_no = self._turn_counter
+        turn_no = self._turn_counter + 1
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
         status = "ok"
         if kwargs.get("failed"):
@@ -317,13 +421,17 @@ class MarkdownMemoryEngine(_ContextEngineBase):
             tool_list.extend(_tool_names(m))
             if m.get("role") == "assistant" and not m.get("tool_calls"):
                 assistant_text = _flatten(m.get("content")) or assistant_text
+        tools_field = (
+            f"Tools used: {', '.join(tool_list[:10])}\n" if tool_list else "")
         turn_digest = (
-            f"### Turn {turn_no} ({stamp})\n"
+            f"### Turn {turn_no}\n"
             f"User: {_clip(user_text, self.turn_user_chars)}\n"
-            f"Tools used: {', '.join(tool_list[:10]) or 'none'}\n"
-            f"Assistant: {_clip(assistant_text, self.turn_assistant_chars) or '(no final text)'}\n"
+            f"{tools_field}"
+            f"Assistant: {_clip(assistant_text, self.turn_assistant_chars) or '(no reply)'}\n"
         )
         self._digest = self._write_state(turn_digest)
+        # Advance the counter only after BOTH files were written successfully.
+        self._turn_counter = turn_no
 
     # ------------------------------------------------------------ file plumbing
     def _state_path(self) -> Path:
@@ -366,8 +474,6 @@ class MarkdownMemoryEngine(_ContextEngineBase):
         matches = list(re.finditer(r"^## Goal\n(.*?)(?=^## |\Z)", existing, re.MULTILINE | re.DOTALL))
         if matches:
             goal = matches[0].group(1).strip()
-        elif self._digest:
-            pass
         if not goal:
             # First recorded turn of the session: derive the goal from it.
             user_line = ""
@@ -378,11 +484,14 @@ class MarkdownMemoryEngine(_ContextEngineBase):
         # Keep only the most recent N turn sections from the previous digest.
         old_turns = _TURN_SECTION_RE.split(existing.split("## Recent turns", 1)[-1]) if "## Recent turns" in existing else []
         old_turns = [t for t in old_turns if t.strip()]
-        kept = old_turns[-(self.max_recent_turns - 1):]
+        # Guard the -0 slice bug: max_recent_turns=1 must keep NO old turns
+        # (old_turns[-0:] would return the whole list).
+        if self.max_recent_turns <= 1:
+            kept: List[str] = []
+        else:
+            kept = old_turns[-(self.max_recent_turns - 1):]
         header = (
-            "# Working state (markdown-memory)\n"
-            f"Session: {self._session_id}\n"
-            f"Updated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            "# Working state (markdown-memory)\n\n"
             f"## Goal\n{goal or '(unknown)'}\n\n"
             "## Recent turns\n"
         )
@@ -403,9 +512,7 @@ class MarkdownMemoryEngine(_ContextEngineBase):
             {
                 "name": "context_recall",
                 "description": (
-                    "Search this conversation's archived history (earlier turns were "
-                    "archived to disk instead of being carried in context). Use it to "
-                    "recover details from before the current task window."
+                    "Search archived earlier turns (recover details not in the working state)."
                 ),
                 "parameters": {
                     "type": "object",
@@ -432,6 +539,19 @@ class MarkdownMemoryEngine(_ContextEngineBase):
         except Exception as exc:
             return json.dumps({"error": f"context_recall failed: {exc}"})
 
+    @staticmethod
+    def _cap_recall(sections: List[str]) -> List[str]:
+        """Bound recall output: ~1500 chars per turn, ~4000 chars total."""
+        capped: List[str] = []
+        total = 0
+        for sec in sections:
+            clipped = sec[:1500]
+            if capped and total + len(clipped) > 4000:
+                break
+            capped.append(clipped)
+            total += len(clipped)
+        return capped
+
     def _recall(self, args: Dict[str, Any]) -> str:
         query = str(args.get("query", "")).strip()
         limit = max(1, min(int(args.get("limit") or 5), 20))
@@ -447,18 +567,19 @@ class MarkdownMemoryEngine(_ContextEngineBase):
             if block.startswith("## Turn "):
                 sections.append(block.strip())
         if not query:
-            hits = sections[-limit:]
+            hits = self._cap_recall(sections[-limit:])
             return json.dumps({"matches": hits, "total_turns": len(sections)})
         terms = [t.lower() for t in re.split(r"\s+", query) if t]
         scored = []
-        for sec in sections:
+        for pos, sec in enumerate(sections):
             low = sec.lower()
             score = sum(low.count(t) for t in terms)
             if score:
-                scored.append((score, sec))
-        scored.sort(key=lambda pair: (-pair[0], sections.index(pair[1])))
-        matches = [sec for _, sec in scored[:limit]]
-        return json.dumps({"matches": matches, "total_turns": len(sections)})
+                scored.append((score, pos, sec))
+        scored.sort(key=lambda pair: (-pair[0], pair[1]))
+        matches = [sec for _s, _p, sec in scored[:limit]]
+        return json.dumps(
+            {"matches": self._cap_recall(matches), "total_turns": len(sections)})
 
     # ---------------------------------------------------------------- status
     def get_status(self) -> Dict[str, Any]:

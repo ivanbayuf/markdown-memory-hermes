@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import re
 import sqlite3
 import sys
@@ -13,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-REPO = Path(os.environ.get("HERMES_REPO", Path.home() / ".hermes" / "hermes-agent"))
+REPO = Path("/home/ubuntu/.hermes/hermes-agent")
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
@@ -62,7 +61,7 @@ def _ins(con, sid, rows):
                 (sid, "telegram", "default", len(rows), 123, "t", 1700000000.0))
 
 
-def _route(con, sid, key="agent:main:telegram:dm:123456789"):
+def _route(con, sid, key="agent:main:telegram:dm:5401342146"):
     con.execute("INSERT OR REPLACE INTO gateway_routing (session_key, entry_json, updated_at)"
                 " VALUES (?, ?, 1)", (key, json.dumps({"session_id": sid})))
 

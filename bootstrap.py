@@ -157,8 +157,10 @@ def _load_active_messages(con: sqlite3.Connection, session_id: str) -> List[Dict
     return msgs
 
 
-def _group_turns(msgs: List[Dict[str, Any]]) -> Tuple[List[List[Dict[str, Any]]], List[str]]:
-    """Group into turns at user-message boundaries; collect ambiguity flags."""
+def _group_turns(msgs: List[Dict[str, Any]]
+                 ) -> Tuple[List[List[Dict[str, Any]]], List[str], List[str]]:
+    """Group into turns at user-message boundaries; collect ambiguity flags
+    and notes. Returns (turns, flags, notes)."""
     flags: List[str] = []
     idx = 0
     # session_meta rows are metadata, not conversation content: skip wherever they appear.
@@ -449,7 +451,7 @@ def _parse_goal(state_path: Path) -> Optional[str]:
     return goal
 
 
-def _state_with_goal(state_md: str, goal: str, max_chars: int = 4000) -> str:
+def _state_with_goal(state_md: str, goal: str, max_chars: int = 2400) -> str:
     """Replace the generated goal while retaining _build_files' rolling/cap rules."""
     match = re.search(r"^(## Goal\n).*?(?=^## Recent turns\n)", state_md,
                       re.MULTILINE | re.DOTALL)
@@ -459,7 +461,9 @@ def _state_with_goal(state_md: str, goal: str, max_chars: int = 4000) -> str:
     # A preserved goal can be longer than the derived, clipped goal. Apply the
     # same oldest-turn removal policy used by the engine until the cap is met.
     while len(updated) > max_chars:
-        turns = list(re.finditer(r"^### Turn \d+\n", updated, re.MULTILINE))
+        # Headings may be timestamped ("### Turn N (stamp)") on legacy state
+        # files, so match any suffix after the turn number.
+        turns = list(re.finditer(r"^### Turn \d+.*\n", updated, re.MULTILINE))
         if len(turns) <= 1:
             break
         start = turns[0].start()
@@ -515,10 +519,10 @@ def repair_state_session(session_id: str, con: sqlite3.Connection,
     if not dry_run:
         goal = _parse_goal(state_path)
         # _build_files supplies the engine-compatible extraction, numbering,
-        # recent-turn rolling, and 4000-character cap.
+        # recent-turn rolling, and 2400-character cap.
         windows = [[_row_to_message(row) for row in turn] for turn in closed]
         state_md, _unused_transcript, derived_goal, _count = _build_files(session_id, windows)
-        state_md = _state_with_goal(state_md, goal or derived_goal, 4000)
+        state_md = _state_with_goal(state_md, goal or derived_goal, 2400)
         if state_path.read_text(encoding="utf-8") == state_md:
             result["migration_status"] = "state.md already repaired (idempotent no-op)"
             result["status"] = "ok"
@@ -566,17 +570,19 @@ def _archive_entry(turn_no: int, stamp: str, window: List[Dict[str, Any]],
         tool_list.extend(_tool_names(m))
         if m.get("role") == "assistant" and not m.get("tool_calls"):
             assistant_text = _flatten(m.get("content")) or assistant_text
+    tools_field = (
+        f"Tools used: {', '.join(tool_list[:10])}\n" if tool_list else "")
     turn_digest = (
-        f"### Turn {turn_no} ({stamp})\n"
-        f"User: {_clip(user_text, 300)}\n"
-        f"Tools used: {', '.join(tool_list[:10]) or 'none'}\n"
-        f"Assistant: {_clip(assistant_text, 500) or '(no final text)'}\n"
+        f"### Turn {turn_no}\n"
+        f"User: {_clip(user_text, 200)}\n"
+        f"{tools_field}"
+        f"Assistant: {_clip(assistant_text, 300) or '(no reply)'}\n"
     )
     return entry, turn_digest
 
 
 def _build_files(session_id: str, turns: List[List[Dict[str, Any]]],
-                 max_state_chars: int = 4000, max_recent_turns: int = 8
+                 max_state_chars: int = 2400, max_recent_turns: int = 8
                  ) -> Tuple[str, str, str, int]:
     """Return (state_md, transcript_md, goal, turn_count)."""
     transcript = [f"# Transcript archive — session {session_id}\n"
@@ -593,9 +599,7 @@ def _build_files(session_id: str, turns: List[List[Dict[str, Any]]],
         if not goal:
             m = re.search(r"^User: (.*)$", turn_digest, re.MULTILINE)
             goal = _clip(m.group(1) if m else "", 300)
-    header = ("# Working state (markdown-memory)\n"
-              f"Session: {session_id}\n"
-              f"Updated: {time.strftime('%Y-%m-%d %H:%M:%S')} (bootstrapped)\n\n"
+    header = ("# Working state (markdown-memory)\n\n"
               f"## Goal\n{goal or '(unknown)'}\n\n"
               "## Recent turns\n")
     kept = digests[-max_recent_turns:]
@@ -710,8 +714,7 @@ def main(argv: List[str]) -> int:
     con = _read_only_connection(hermes_home / "state.db")
     targets, stale = _target_sessions(con)
     if sessions_filter:
-        targets = [t for t in targets if t["session_id"] in sessions_filter or
-                   t.get("status") in ("missing", "archived") and t["session_id"] in sessions_filter]
+        targets = [t for t in targets if t["session_id"] in sessions_filter]
     report: List[Dict[str, Any]] = []
     for row in targets:
         if row.get("status") in ("missing", "archived"):

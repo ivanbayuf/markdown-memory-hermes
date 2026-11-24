@@ -1,18 +1,12 @@
-"""Make the tests path-portable: resolve the Hermes repo from ``HERMES_REPO``
-(environment variable) with a sane default; the plugin under test is the repo
-copy itself (this tests/ directory sits inside it)."""
 import importlib.util
-import os
 import sys
 from pathlib import Path
 
-import pytest
-
-REPO_ROOT = Path(os.environ.get("HERMES_REPO", Path.home() / ".hermes" / "hermes-agent"))
+REPO_ROOT = Path("/home/ubuntu/.hermes/hermes-agent")
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-_PLUGIN_DIR = Path(__file__).resolve().parent.parent
+_PLUGIN_DIR = Path("/home/ubuntu/.hermes/plugins/markdown-memory")
 
 
 def load_engine_module():
@@ -24,6 +18,9 @@ def load_engine_module():
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+import pytest
 
 
 @pytest.fixture
