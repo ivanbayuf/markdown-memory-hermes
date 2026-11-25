@@ -1,12 +1,18 @@
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path("/home/ubuntu/.hermes/hermes-agent")
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+# Hermes host checkout (needed only by the integration tests and the
+# ContextEngine subclass check). Override with HERMES_REPO=/path/to/hermes-agent.
+HERMES_REPO = Path(os.environ.get(
+    "HERMES_REPO", str(Path.home() / ".hermes" / "hermes-agent")))
+REPO_ROOT = HERMES_REPO  # backwards-compatible name
+if HERMES_REPO.is_dir() and str(HERMES_REPO) not in sys.path:
+    sys.path.insert(0, str(HERMES_REPO))
 
-_PLUGIN_DIR = Path("/home/ubuntu/.hermes/plugins/markdown-memory")
+# Always test the plugin source in THIS checkout, never an installed copy.
+_PLUGIN_DIR = Path(__file__).resolve().parent.parent
 
 
 def load_engine_module():
@@ -21,6 +27,14 @@ def load_engine_module():
 
 
 import pytest
+
+
+def hermes_available() -> bool:
+    return importlib.util.find_spec("agent") is not None
+
+
+requires_hermes = pytest.mark.skipif(
+    not hermes_available(), reason="Hermes host not importable; set HERMES_REPO")
 
 
 @pytest.fixture

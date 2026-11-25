@@ -1,5 +1,14 @@
 # Benchmark evidence and reproduction
 
+> **Status (2026-11-25): stale.** The run below used the 2026-11-24 engine
+> (4,000-char state cap, 300/500-char turn clips, no previous-exchange tail).
+> The current engine uses a 2,400-char cap, 200/300-char clips, and sends the
+> previous exchange verbatim. A character-count comparison on the same fixture
+> shape (not tiktoken) measured: native 978,504 chars / 40 requests; previous
+> engine 195,676 (−80.0%); current engine 211,048 (−78.4%, +7.9% vs previous);
+> current engine with `keep_last_exchange=False` identical to previous.
+> Re-run the harness below to replace the token figures.
+
 ## Measured 2026-11-24 (reproducible, synthetic fixture)
 
 ![Per-request input tokens](../assets/benchmark-chart.png)

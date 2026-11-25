@@ -1,7 +1,8 @@
 import importlib.util, tempfile, json, os, sys
+_PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 spec = importlib.util.spec_from_file_location(
-    "markdown_memory", "/home/ubuntu/.hermes/plugins/markdown-memory/__init__.py",
-    submodule_search_locations=["/home/ubuntu/.hermes/plugins/markdown-memory"])
+    "markdown_memory", os.path.join(_PLUGIN, "__init__.py"),
+    submodule_search_locations=[_PLUGIN])
 m = importlib.util.module_from_spec(spec)
 sys.modules["markdown_memory"] = m
 spec.loader.exec_module(m)

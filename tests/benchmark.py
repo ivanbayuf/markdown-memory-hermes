@@ -21,8 +21,9 @@ import tempfile
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, "/home/ubuntu/.hermes/hermes-agent")
-sys.path.insert(0, "/home/ubuntu/.hermes/plugins/markdown-memory/tests")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.environ.get("HERMES_REPO", os.path.expanduser("~/.hermes/hermes-agent")))
+sys.path.insert(0, _HERE)
 
 os.environ["HERMES_HOME"] = tempfile.mkdtemp(prefix="mm-bench-")
 

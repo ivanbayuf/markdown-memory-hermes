@@ -24,11 +24,11 @@ markdown-memory — a context engine plugin that swaps pre-turn history for a co
 
 | Seam | When | What it does |
 |---|---|---|
-| `select_context` | before every API request | swaps pre-turn history for `system prompt + digest + current turn` |
+| `select_context` | before every API request | swaps older history for `system prompt + digest + previous exchange + current turn` |
 | `on_turn_complete` | when a turn finishes | appends the turn to `transcript.md`, rolls `state.md`, freezes a new digest |
 | `context_recall` | when the model asks | greps `transcript.md`, returns matching turns — you pay only for what you retrieve |
 
-The cut point is always *before the current turn's user message*, so every `tool_call_id` ↔ result pair — including parallel calls and multi-round turns — stays inside the request. The digest is frozen mid-turn: every retry and tool-round replays a byte-identical prefix (prompt-cache friendly). Old detail lives in two files per session — `state.md` (rolling working memory, capped at 4k chars) and `transcript.md` (append-only archive) — and never disappears: `context_recall` fetches it on demand.
+The cut point is always *before the message that opened the current turn* (the host's `incoming_message`, so an interrupt/redirect mid-turn doesn't move it), so every `tool_call_id` ↔ result pair — including parallel calls and multi-round turns — stays inside the request. The previous exchange (your last message and the model's final reply) is sent as plain text, so follow-ups like "do option 2" work without a recall round-trip. The digest is frozen mid-turn: every retry and tool-round replays a byte-identical prefix (prompt-cache friendly within a turn). Old detail lives in two files per session — `state.md` (rolling working memory, capped at 2,400 chars) and `transcript.md` (append-only archive) — and never disappears: `context_recall` fetches it on demand.
 
 Fail-open by design: a session without memory files passes through unchanged, and a crashing engine cannot break a run (every hook swallows its own exceptions).
 
@@ -46,6 +46,8 @@ Reproducible synthetic benchmark — 20 turns × 3 requests per turn, tiktoken `
 | Last request | 6,338 | **1,163 (−81.7%)** |
 
 Native per-request size grows linearly with chat length; the plugin's stays flat (~900–1,160 tokens) once the digest exists. Re-running the harness produces byte-identical JSON.
+
+> **These figures predate the 2026-11-25 engine** (they were measured with a 4,000-char state cap and no previous-exchange tail). A character-count comparison on the same fixture shape puts the current engine at ~78% saved versus ~80% for the old one: the verbatim previous exchange adds ~8% per request. Re-run `benchmarks/bench_hermes.py` to refresh them; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 Honest scope: tokens counted with a pinned tokenizer on captured messages, not provider-billed usage; the fixture is synthetic, so the percentage will move on real conversations; longer sessions help more (native keeps growing, the digest does not). Methodology, per-request values, and the retired 306k → 59k claim that this benchmark **replaced because it was not reproducible**: [docs/BENCHMARKS.md](docs/BENCHMARKS.md)
 
@@ -93,7 +95,7 @@ Dry-run default, atomic writes, never overwrites, live turns untouched; ambiguit
 HERMES_REPO=/path/to/hermes-agent pytest tests/ -q
 ```
 
-Unit tests (selection semantics, tool pairing, determinism, fail-open, migration) plus live-pipeline integration tests against a mock provider. The suite asserts byte-identical retry payloads and zero orphaned tool results on the wire. No test counts tokens — the token figures come only from the benchmark harness.
+Tests always load the plugin source in this checkout (never an installed copy). Unit tests run anywhere; the live-pipeline integration tests (mock provider) need a Hermes checkout via `HERMES_REPO` and are skipped without one. After changing the plugin, copy it to `~/.hermes/plugins/markdown-memory/` again — the installed copy does not update itself. The suite asserts byte-identical retry payloads and zero orphaned tool results on the wire. No test counts tokens — the token figures come only from the benchmark harness.
 
 ## License
 
