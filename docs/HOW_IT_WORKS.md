@@ -4,16 +4,16 @@
 
 A Hermes Agent context-engine plugin. Hermes natively replays the full
 conversation transcript on every LLM request, so input tokens grow with chat
-length. This engine replaces everything before the current turn with a short,
-frozen digest, keeps the current turn verbatim, and persists what it removed
-to two files per session. No LLM summarisation anywhere — every step below is
+length. This engine replaces older history with a short, frozen digest plus
+the previous exchange, keeps the current turn verbatim, and persists what it
+removed to two files per session. No LLM summarisation anywhere — every step below is
 deterministic text processing.
 
 ## The three seams
 
 | Seam | When it runs | What it does |
 |---|---|---|
-| `select_context` | Before every API request | Swaps pre-turn history for `system prompt + digest + current turn` |
+| `select_context` | Before every API request | Swaps older history for `system prompt + digest + previous exchange + current turn` |
 | `on_turn_complete` | When a turn finishes | Appends the turn to `transcript.md`, rolls `state.md`, freezes a new digest |
 | `context_recall` (tool) | When the model asks | Searches `transcript.md` and returns matching turns |
 
@@ -21,12 +21,22 @@ deterministic text processing.
 
 1. **Hermes assembles a request** — system prompt + full transcript replay +
    the new user message.
-2. **`select_context` cuts it** — the cut point is always *before the current
-   turn's user message*. The replacement is `[leading system messages] +
-   [one user message carrying the digest] + [everything from the current
-   turn's user message onward]`. The digest is injected as a `user` message,
-   so the wire has two consecutive `user` messages; that is intentional and
-   covered by tests.
+2. **`select_context` cuts it** — the cut point is always *before the message
+   that opened the current turn*. The engine anchors on the host's
+   `incoming_message`, so a user-role correction the host appends mid-turn
+   (interrupt / redirect) does not move the cut and drop the turn's earlier
+   tool work. Without `incoming_message` it falls back to the last user
+   message. The replacement is `[leading system messages] + [one user message
+   carrying the digest] + [previous exchange] + [everything from the turn's
+   opening message onward]`.
+   - **Previous exchange**: the last user message and the final assistant
+     reply before the current turn, as plain-text messages (no tool rows, so
+     no pairing obligations; user text ≤2,000 chars, reply ≤6,000 chars,
+     images dropped). This lets the model resolve "do option 2" without a
+     recall round-trip. Its `### Turn` section is left out of the digest so
+     it is not sent twice. Disable with `keep_last_exchange=False`.
+   - The digest is injected as a `user` message, so the wire has consecutive
+     `user` messages; that is intentional and covered by tests.
 3. **The digest is frozen mid-turn** — `on_turn_complete` is the only place
    the digest changes, so every retry and tool-round inside a turn replays a
    byte-identical prompt prefix (prompt-cache friendly). Verified by the
@@ -43,18 +53,25 @@ deterministic text processing.
 ## The two files (per session, under `$HERMES_HOME/context-memory/<session>/`)
 
 - **`state.md` — rolling working state.** Header (`Session`, `Updated`),
-  `## Goal` (the first turn's user text, clipped to 300 chars — not a
-  summary), then `## Recent turns`: up to **8 turns**, each `### Turn N
-  (timestamp)` with `User:` (≤300 chars), `Tools used:` (≤10 names),
-  `Assistant:` (≤500 chars). Hard cap **4,000 chars** — oldest turns drop
-  first, but at least one turn is always kept. Written atomically
-  (`.md.tmp` + `os.replace`). Measured: 907 chars after turn 1, 3,962 after
-  turn 20 in the benchmark scenario (see `docs/BENCHMARKS.md`).
+  `## Goal` (the first turn's user text after a session start or reset,
+  clipped to 300 chars — not a summary), then `## Recent turns`: up to
+  **8 turns**, each `### Turn N` with `User:` (≤200 chars), `Tools used:`
+  (≤10 names), `Assistant:` (≤300 chars). Every field is collapsed to one
+  line, so markdown inside a message cannot inject headings. Hard cap
+  **2,400 chars** — oldest turns drop first, but at least one turn is always
+  kept. Written atomically (`.md.tmp` + `os.replace`).
+- Gateway routing metadata (`Gateway message origin (JSON data, …)` blocks)
+  is stripped from user text before it reaches the goal, digest or archive.
 - **`transcript.md` — append-only archive.** One `## Turn N — timestamp —
   status: ok|failed|interrupted` section per turn, with `USER:` /
   `ASSISTANT:` / `TOOL_CALL <name> args:` / `TOOL_RESULT[<id> (<name>)]`
-  lines, each clipped to 2,000 chars. **System messages are not archived**
-  — the archive is a record of turns, not a complete transcript.
+  lines, each clipped to 2,000 chars. Continuation lines that look like
+  archive structure (`#…`, `USER: `, `TOOL_RESULT[` …) are escaped with a
+  leading `\`. Appends take an exclusive `flock` (POSIX), and if another
+  process changed the file since this engine's last write, the turn number is
+  re-derived from the file, so two writers never reuse a number. **System
+  messages are not archived** — the archive is a record of turns, not a
+  complete transcript.
 
 ## Tool-call continuity guarantees
 
@@ -65,10 +82,11 @@ deterministic text processing.
 - If the model needs pre-turn history, `context_recall` fetches it on demand
   instead of the request carrying it.
 - `context_recall` takes `query` (required) and `limit` (default 5, clamped
-  1–20). Sections are scored by substring matches per query term, best first.
-  An empty query returns the last N turns. There is **no per-section or
-  total-size cap** on what it returns — a broad query over a long archive can
-  return a lot (known limitation, see below).
+  1–20). Sections are ranked by how many distinct query terms they contain,
+  then by term frequency (capped per term, so one long turn can't win on a
+  repeated word), then newest first. An empty query returns the last N turns,
+  newest first. Output is capped at ~1,500 chars per turn and ~4,000 total.
+  Errors return a generic message (no paths or exception text).
 
 ## Fail-open by design
 
@@ -107,13 +125,20 @@ review instead of silently migrated. See the README for the commands.
 - **Older detail is recoverable only if it was archived and `context_recall`
   finds it.** The archive drops system messages, and recall is substring
   scoring, not semantic search.
-- **No locking.** Two processes writing the same session's files can
-  interleave appends/replacements.
+- **Locking covers the archive only.** Archive appends are locked and turn
+  numbers stay unique, but two processes still each rewrite `state.md` from
+  their own view (last writer wins).
 - **Session-id sanitisation can collide** (`sess/abc` and `sess_abc` map to
   the same directory; ids truncate at 120 chars). Two sessions sharing a
   directory would share/corrupt one `state.md`/`transcript.md`.
-- **`on_session_reset` restarts turn numbering at 1** in the archive; the
-  count is reconciled from the archive on the next `on_session_start`.
+- **`/new` / `/reset`** drops the in-memory digest (requests pass through
+  natively until the next turn is recorded). The next recorded turn starts a
+  fresh `state.md` (the old one is kept as `state.md.pre-reset-<stamp>.bak`)
+  and writes a `## Session reset` marker into the archive. Turn numbers keep
+  counting, so they stay unique, and pre-reset turns remain recallable.
+- **The previous exchange makes requests ~8% larger** than digest-only
+  selection on the benchmark fixture shape (character count). It is the cost
+  of the model seeing its own last reply in full.
 - **`bootstrap.py --reconcile` drops tool-call declarations** for assistant
   rows that carry only `tool_calls` and no text (backfill keeps them).
 - **`repair-state` renumbers turns from 1**, which can disagree with the

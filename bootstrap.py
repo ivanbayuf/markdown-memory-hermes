@@ -54,6 +54,10 @@ DIGEST_PREFIX = _mm.DIGEST_PREFIX
 _clip = _mm._clip
 _flatten = _mm._flatten
 _tool_names = _mm._tool_names
+_escape_body = _mm._escape_body
+sanitize_user_text = _mm.sanitize_user_text
+MAX_STATE_CHARS = _mm.DEFAULT_MAX_STATE_CHARS
+MAX_RECENT_TURNS = _mm.DEFAULT_MAX_RECENT_TURNS
 
 STALE_NOTE = "stale — not migrated (not referenced by gateway_routing)"
 
@@ -296,12 +300,23 @@ def _archive_block_info(text: str) -> List[Tuple[int, int, str, str]]:
     return result
 
 
-def _db_user_first_line(window: List[Tuple]) -> str:
+def _db_user_first_line(window: List[Tuple], raw: bool = False) -> str:
+    """First line of the turn's user text as the archive records it (sanitized
+    of gateway metadata). ``raw=True`` gives the unsanitized form, which
+    archives written before sanitization contain."""
     for row in window:
         if row[1] == "user":
-            value = _clip(_flatten(row[4]), 2000)
-            return value.split("\n", 1)[0]
+            text = _flatten(row[4])
+            if not raw:
+                text = sanitize_user_text(text)
+            return _clip(text, 2000).split("\n", 1)[0]
     return ""
+
+
+def _db_user_line_variants(window: List[Tuple]) -> List[str]:
+    clean = _db_user_first_line(window)
+    raw = _db_user_first_line(window, raw=True)
+    return [clean] if clean == raw else [clean, raw]
 
 
 def reconcile_session(session_id: str, con: sqlite3.Connection,
@@ -338,12 +353,15 @@ def reconcile_session(session_id: str, con: sqlite3.Connection,
     # texts are consumed in DB order (occurrence count), never by position.
     unmatched: Dict[str, List[int]] = {}
     for j, window in enumerate(db_turns):
-        unmatched.setdefault(_db_user_first_line(window), []).append(j)
+        for variant in _db_user_line_variants(window):
+            unmatched.setdefault(variant, []).append(j)
+    consumed: set = set()
     for i, (tno, _start, _block, _user) in enumerate(blocks):
-        candidates = unmatched.get(_user)
+        candidates = [c for c in unmatched.get(_user, []) if c not in consumed]
         if not candidates:
             continue
-        j = candidates.pop(0)
+        j = candidates[0]
+        consumed.add(j)
         if re.search(rf"(?m)^#### Turn {tno} — completion", text):
             already.append(tno)
             continue
@@ -362,9 +380,10 @@ def reconcile_session(session_id: str, con: sqlite3.Connection,
             if role == "tool" and tool_call_id and tool_call_id not in archived_result_ids:
                 missing_rows.append(row)
             elif role in ("user", "assistant"):
-                t = _clip(_flatten(content), 2000)
-                first_line = t.split("\n", 1)[0]
-                if t and first_line not in archived_texts:
+                flat = _flatten(content)
+                variants = [flat, sanitize_user_text(flat)] if role == "user" else [flat]
+                lines_ = [_clip(v, 2000).split("\n", 1)[0] for v in variants if v]
+                if lines_ and not any(line in archived_texts for line in lines_):
                     missing_rows.append(row)
         # Only CLOSED turns are reconciled; the last DB turn may still be live.
         if missing_rows and j < len(db_turns) - 1:
@@ -374,11 +393,13 @@ def reconcile_session(session_id: str, con: sqlite3.Connection,
                 (_rid, role, tool_calls, tool_call_id, content, _tool_name, _ts) = row
                 if role == "tool" and tool_call_id:
                     additions.append(
-                        f"TOOL_RESULT[{tool_call_id}]: {_clip(_flatten(content), 2000)}")
+                        f"TOOL_RESULT[{tool_call_id}]: {_escape_body(_clip(_flatten(content), 2000))}")
                 elif role in ("user", "assistant"):
                     t = _flatten(content)
+                    if role == "user":
+                        t = sanitize_user_text(t)
                     if t:
-                        additions.append(f"{role.upper()}: {_clip(t, 2000)}")
+                        additions.append(f"{role.upper()}: {_escape_body(_clip(t, 2000))}")
             appended.append(tno)
         elif missing_rows and j == len(db_turns) - 1:
             result["live_turn_note"] = (
@@ -409,13 +430,15 @@ def backfill_session(session_id: str, con: sqlite3.Connection,
     archived_users = Counter(user for _n, _s, _b, user in blocks)
     missing: List[List[Tuple]] = []
     for window in db_turns:
-        user = _db_user_first_line(window)
-        if (_turn_is_closed(window) and archived_users.get(user, 0) == 0):
-            missing.append(window)
-        elif archived_users.get(user, 0) > 0:
+        # Archives written before sanitization hold the raw first line.
+        user = next((v for v in _db_user_line_variants(window)
+                     if archived_users.get(v, 0) > 0), None)
+        if user is not None:
             # Match each DB turn to one archived block. Counts matter when a
             # user repeats the same first line in multiple turns.
             archived_users[user] -= 1
+        elif _turn_is_closed(window):
+            missing.append(window)
     first_number = max((n for n, _s, _b, _u in blocks), default=0) + 1
     additions: List[str] = []
     appended: List[int] = []
@@ -451,7 +474,7 @@ def _parse_goal(state_path: Path) -> Optional[str]:
     return goal
 
 
-def _state_with_goal(state_md: str, goal: str, max_chars: int = 2400) -> str:
+def _state_with_goal(state_md: str, goal: str, max_chars: int = MAX_STATE_CHARS) -> str:
     """Replace the generated goal while retaining _build_files' rolling/cap rules."""
     match = re.search(r"^(## Goal\n).*?(?=^## Recent turns\n)", state_md,
                       re.MULTILINE | re.DOTALL)
@@ -508,7 +531,7 @@ def repair_state_session(session_id: str, con: sqlite3.Connection,
             if row[1] == "assistant" and not row[2]:
                 assistant = _flatten(row[4]).strip() or assistant
         summaries.append({"turn": number, "user": user, "assistant": assistant.split("\n", 1)[0]})
-    result["repair_turns"] = summaries[-8:]
+    result["repair_turns"] = summaries[-MAX_RECENT_TURNS:]
     if not state_path.exists():
         result.update(status="no state", migration_status="no state.md to repair")
         return result
@@ -522,7 +545,7 @@ def repair_state_session(session_id: str, con: sqlite3.Connection,
         # recent-turn rolling, and 2400-character cap.
         windows = [[_row_to_message(row) for row in turn] for turn in closed]
         state_md, _unused_transcript, derived_goal, _count = _build_files(session_id, windows)
-        state_md = _state_with_goal(state_md, goal or derived_goal, 2400)
+        state_md = _state_with_goal(state_md, goal or derived_goal, MAX_STATE_CHARS)
         if state_path.read_text(encoding="utf-8") == state_md:
             result["migration_status"] = "state.md already repaired (idempotent no-op)"
             result["status"] = "ok"
@@ -541,48 +564,14 @@ def repair_state_session(session_id: str, con: sqlite3.Connection,
 
 def _archive_entry(turn_no: int, stamp: str, window: List[Dict[str, Any]],
                    status: str) -> Tuple[str, str]:
-    """Same archive/one-line-digest format the engine writes natively."""
-    lines = [f"## Turn {turn_no} — {stamp} — status: {status}"]
-    for msg in window:
-        role = msg.get("role", "?")
-        if role == "assistant" and msg.get("tool_calls"):
-            for call in msg["tool_calls"]:
-                fn = call.get("function", {}) if isinstance(call, dict) else {}
-                args = fn.get("arguments", "")
-                args_text = args if isinstance(args, str) else json.dumps(args, ensure_ascii=False, default=str)
-                lines.append(f"TOOL_CALL {fn.get('name', '?')} args: {_clip(args_text, 2000)}")
-        text = _flatten(msg.get("content"))
-        if role == "tool":
-            tid = msg.get("tool_call_id", "")
-            name = msg.get("name", "")
-            label = tid if tid else name
-            if tid and name:
-                label = f"{tid} ({name})"
-            lines.append(f"TOOL_RESULT[{label}]: {_clip(text, 2000)}")
-        elif role in ("user", "assistant"):
-            if text:
-                lines.append(f"{role.upper()}: {_clip(text, 2000)}")
-    entry = "\n".join(lines).rstrip() + "\n"
-    user_text = next((_flatten(m.get("content")) for m in window if m.get("role") == "user"), "")
-    assistant_text = ""
-    tool_list: List[str] = []
-    for m in window:
-        tool_list.extend(_tool_names(m))
-        if m.get("role") == "assistant" and not m.get("tool_calls"):
-            assistant_text = _flatten(m.get("content")) or assistant_text
-    tools_field = (
-        f"Tools used: {', '.join(tool_list[:10])}\n" if tool_list else "")
-    turn_digest = (
-        f"### Turn {turn_no}\n"
-        f"User: {_clip(user_text, 200)}\n"
-        f"{tools_field}"
-        f"Assistant: {_clip(assistant_text, 300) or '(no reply)'}\n"
-    )
-    return entry, turn_digest
+    """Same archive block and turn digest the engine writes natively (shared code)."""
+    return (_mm.format_archive_entry(turn_no, stamp, window, status),
+            _mm.format_turn_digest(turn_no, window))
 
 
 def _build_files(session_id: str, turns: List[List[Dict[str, Any]]],
-                 max_state_chars: int = 2400, max_recent_turns: int = 8
+                 max_state_chars: int = MAX_STATE_CHARS,
+                 max_recent_turns: int = MAX_RECENT_TURNS
                  ) -> Tuple[str, str, str, int]:
     """Return (state_md, transcript_md, goal, turn_count)."""
     transcript = [f"# Transcript archive — session {session_id}\n"
@@ -597,16 +586,8 @@ def _build_files(session_id: str, turns: List[List[Dict[str, Any]]],
         transcript.append("\n" + entry)
         digests.append(turn_digest)
         if not goal:
-            m = re.search(r"^User: (.*)$", turn_digest, re.MULTILINE)
-            goal = _clip(m.group(1) if m else "", 300)
-    header = ("# Working state (markdown-memory)\n\n"
-              f"## Goal\n{goal or '(unknown)'}\n\n"
-              "## Recent turns\n")
-    kept = digests[-max_recent_turns:]
-    text = header + "".join(kept)
-    while len(text) > max_state_chars and len(kept) > 1:
-        kept.pop(0)
-        text = header + "".join(kept)
+            goal = _mm.derive_goal(turn_digest)
+    text = _mm.render_state(goal, digests[-max_recent_turns:], max_state_chars)
     return text, "".join(transcript), goal, len(turns)
 
 

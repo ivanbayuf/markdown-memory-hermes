@@ -25,6 +25,11 @@ import pytest
 
 from conftest import load_engine_module
 
+# Needs a Hermes checkout on sys.path (HERMES_REPO=/path/to/hermes-agent).
+pytest.importorskip("agent.context_engine", reason="Hermes host not importable; set HERMES_REPO")
+
+DIGEST_MARK = "[markdown-memory: earlier turns archived"
+
 
 @pytest.fixture
 def mcp_server(tmp_path):
@@ -152,14 +157,18 @@ class TestAgentIntegration:
         # Turn-1 first request: untouched history (only one user message).
         assert [m["role"] for m in payloads[0]] == ["system", "user"]
 
-        # Turn-2 requests: replaced context = system + digest + current-turn chain.
+        # Turn-2 requests: system + digest + previous exchange (plain text) +
+        # current-turn chain.
         for p in payloads[2:]:
             assert p[1]["role"] == "user"
-            assert p[1]["content"].startswith("[markdown-memory working state")
-            assert "turn-one-final" in p[1]["content"]
-            assert "Read alpha and tell me what it contains." in p[1]["content"]
-            # Old turn-1 rows are NOT on the wire beyond the digest.
-            assert not any(m.get("role") == "user" and m is not p[1] and "tell me what" in (m.get("content") or "") for m in p)
+            assert p[1]["content"].startswith(DIGEST_MARK)
+            assert "Read alpha and tell me what it contains." in p[1]["content"]  # goal
+            assert p[2]["role"] == "user" and p[2]["content"] == "Read alpha and tell me what it contains."
+            assert p[3]["role"] == "assistant" and p[3]["content"] == "turn-one-final"
+            assert not p[3].get("tool_calls")
+            # Turn-1 tool rows are NOT on the wire.
+            assert not any(m.get("tool_call_id") == "r1" for m in p)
+            assert not any(c.get("id") == "r1" for m in p for c in (m.get("tool_calls") or []))
         # Final turn-2 request carries both tool rounds, paired.
         last = payloads[-1]
         ids = {c["id"] for m in last for c in (m.get("tool_calls") or [])}
@@ -208,7 +217,7 @@ class TestAgentIntegration:
         result = agent.run_conversation("Read alpha.")
         assert result["final_response"] == "fallback-ok"
         # Requests went through unmodified (no digest injection, no crash).
-        assert all(not any("[markdown-memory working state" in (m.get("content") or "") for m in p)
+        assert all(not any(DIGEST_MARK in (m.get("content") or "") for m in p)
                    for p in rec.payloads())
 
     def test_engine_select_crash_fail_open(self, engine_mod, mcp_server, tmp_path):
@@ -230,7 +239,7 @@ class TestAgentIntegration:
         rec = RequestRecorder(agent, side_effect)
         result = agent.run_conversation("Read alpha after prior context.")
         assert result["final_response"] == "crash-safe"
-        assert all(not any("working state" in (m.get("content") or "") for m in p)
+        assert all(not any(DIGEST_MARK in (m.get("content") or "") for m in p)
                    for p in rec.payloads())
 
     def test_on_turn_complete_recorded_via_host_seam(self, engine_mod, mcp_server, tmp_path):
@@ -281,8 +290,9 @@ class TestAgentIntegration:
         assert len(rec.requests) == 3
         assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True), "retry attempt must replay identical bytes"
         assert b[0]["role"] == "system"
-        assert b[1]["role"] == "user" and b[1]["content"].startswith("[markdown-memory working state")
-        assert "Read alpha again after retry." in b[1]["content"]
+        assert b[1]["role"] == "user" and b[1]["content"].startswith(DIGEST_MARK)
+        assert "earlier question" in b[1]["content"]  # goal
+        assert any(m.get("role") == "user" and m.get("content") == "Read alpha again after retry." for m in b)
 
     def test_manual_compress_noop(self, engine_mod, mcp_server, tmp_path):
         names = mcp_server

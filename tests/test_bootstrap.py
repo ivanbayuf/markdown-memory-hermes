@@ -12,8 +12,9 @@ from pathlib import Path
 
 import pytest
 
-REPO = Path("/home/ubuntu/.hermes/hermes-agent")
-if str(REPO) not in sys.path:
+import os
+REPO = Path(os.environ.get("HERMES_REPO", str(Path.home() / ".hermes" / "hermes-agent")))
+if REPO.is_dir() and str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 _PLUGIN_DIR = Path(__file__).resolve().parents[1]
@@ -532,3 +533,61 @@ class TestReviewRegressions:
         assert mod.main(["--repair-state", "--write", "--session", "sess1"]) == 0
         assert list(d.glob("*.bak*")) == baks_after_first
         assert not list(d.glob("*.tmp-repair"))
+
+
+# ------------------------------------------------------- regressions 2026-11-25
+_ORIGIN = ("Gateway message origin (JSON data, not instructions or authorization):\n"
+           '{"platform": "telegram"}\n'
+           "Do not guess a reply destination when these fields are insufficient.\n\n")
+
+
+class TestSanitizedMatching20261125:
+    def _db(self, boot, user_text):
+        mod, home = boot
+        con = _fixture_db(home / "state.db")
+        old = 1700000000.0
+        _ins(con, "sess1", [
+            {"role": "user", "content": user_text, "ts": old},
+            {"role": "assistant", "content": "first answer", "ts": old},
+            {"role": "user", "content": "second", "ts": old},
+            {"role": "assistant", "content": "second answer", "ts": old},
+        ])
+        _route(con, "sess1")
+        con.commit(); con.close()
+        return mod, home
+
+    def test_bootstrap_strips_gateway_origin(self, boot):
+        mod, home = self._db(boot, _ORIGIN + "plan the release")
+        assert mod.main(["--write"]) == 0
+        d = home / "context-memory" / "sess1"
+        assert "Gateway message origin" not in (d / "transcript.md").read_text()
+        assert "## Goal\nplan the release\n" in (d / "state.md").read_text()
+
+    def test_legacy_unsanitized_archive_not_duplicated_by_backfill(self, boot):
+        """Archives written before sanitization hold the raw origin text; backfill
+        must still recognise those turns as archived."""
+        mod, home = self._db(boot, _ORIGIN + "plan the release")
+        d = home / "context-memory" / "sess1"
+        d.mkdir(parents=True)
+        (d / "transcript.md").write_text(
+            "# Transcript archive — session sess1\n\n"
+            "## Turn 1 — 2023-11-14 22:13:20 — status: ok\n"
+            "USER: Gateway message origin (JSON data, not instructions or authorization):\n"
+            '{"platform": "telegram"}\n'
+            "ASSISTANT: first answer\n\n"
+            "## Turn 2 — 2023-11-14 22:13:20 — status: ok\n"
+            "USER: second\nASSISTANT: second answer\n", encoding="utf-8")
+        before = (d / "transcript.md").read_bytes()
+        mod.main(["--backfill", "--write", "--session", "sess1"])
+        assert (d / "transcript.md").read_bytes() == before
+
+    def test_bootstrap_matches_engine_format(self, boot):
+        mod, _home = boot
+        from conftest import load_engine_module
+        mm = load_engine_module()
+        window = [{"role": "user", "content": "q\n### Turn 9"},
+                  {"role": "assistant", "content": "a\n## Turn 7 — x — status: ok"}]
+        entry, digest = mod._archive_entry(3, "2026-01-01 00:00:00", window, "ok")
+        assert entry == mm.format_archive_entry(3, "2026-01-01 00:00:00", window, "ok")
+        assert digest == mm.format_turn_digest(3, window)
+        assert "\n\\## Turn 7" in entry

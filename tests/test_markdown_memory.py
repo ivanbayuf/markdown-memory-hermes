@@ -87,13 +87,22 @@ class TestSelection:
         sel = engine.select_context(copy.deepcopy(turn2))
         assert sel is not None
         roles = [m["role"] for m in sel]
-        assert roles == ["system", "user", "user", "assistant", "tool", "assistant"]
+        # system, digest, previous exchange (user + final reply), current turn.
+        assert roles == ["system", "user", "user", "assistant", "user", "assistant", "tool", "assistant"]
         assert sel[0]["content"] == "You are helpful."
-        # Old history is gone.
-        assert not any("a.txt" in (m.get("content") or "") for m in sel if m["role"] == "user" and "earlier turns archived" not in (m.get("content") or "")[:45])
+        assert sel[2] == {"role": "user", "content": "What is in a.txt and b.txt?"}
+        assert sel[3] == {"role": "assistant", "content": "a.txt has alpha."}
         # Current turn intact.
-        assert sel[2] is turn2_user or sel[2]["content"] == "Now compare them."
+        assert sel[4] is turn2_user or sel[4]["content"] == "Now compare them."
         assert any(m.get("tool_call_id") == "c9" for m in sel)
+
+    def test_without_last_exchange_only_digest_and_turn(self, engine_mod, tmp_path):
+        e = engine_mod.MarkdownMemoryEngine(keep_last_exchange=False)
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        e.on_turn_complete(copy.deepcopy(_turn1_msgs()))
+        sel = e.select_context(_turn1_msgs() + [{"role": "user", "content": "next"}])
+        assert [m["role"] for m in sel] == ["system", "user", "user"]
+        assert "a.txt has alpha, b.txt has beta." in sel[1]["content"]
 
     def test_digest_injection_contains_recorded_turn(self, engine):
         sel = engine.select_context([
@@ -104,8 +113,12 @@ class TestSelection:
         ])
         digest = sel[1]["content"]
         assert digest.startswith("[markdown-memory: earlier turns archived to disk")
-        assert "What is in a.txt and b.txt?" in digest
-        assert "a.txt has alpha, b.txt has beta." in digest
+        assert "What is in a.txt and b.txt?" in digest  # goal
+        # The newest turn travels verbatim as the previous exchange, so its
+        # digest section is not sent twice.
+        assert "### Turn 1" not in digest
+        assert sel[2]["content"] == "What is in a.txt and b.txt?"
+        assert sel[3] == {"role": "assistant", "content": "x"}
 
     def test_tool_pairing_multi_round(self, engine):
         """Multi-round turn: both rounds' calls and results stay paired."""
@@ -378,6 +391,7 @@ class TestContract:
         assert schemas[0]["parameters"]["properties"]["query"]["type"] == "string"
 
     def test_engine_is_context_engine_subclass(self, engine_mod, engine):
+        pytest.importorskip("agent.context_engine", reason="Hermes host not importable; set HERMES_REPO")
         from agent.context_engine import ContextEngine
         assert isinstance(engine, ContextEngine)
 
@@ -424,3 +438,159 @@ class TestRegressions20261124:
             {"role": "user", "content": "second"},
         ]
         assert e.select_context(copy.deepcopy(req)) is None
+
+
+# ------------------------------------------------------- regressions 2026-11-25
+def _simple_turn(u, a, sys_msg="sys"):
+    return [{"role": "system", "content": sys_msg},
+            {"role": "user", "content": u},
+            {"role": "assistant", "content": a}]
+
+
+class TestRegressions20261125:
+    def test_previous_reply_visible_beyond_digest_clip(self, engine_mod, tmp_path):
+        """Follow-ups like 'do option 4' need the previous reply, which the
+        300-char digest line used to cut off."""
+        e = engine_mod.MarkdownMemoryEngine()
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        reply = "Options:\n" + "\n".join(f"{i}. option {i}: " + "detail " * 12 for i in range(1, 6))
+        e.on_turn_complete(_simple_turn("give me options", reply))
+        sel = e.select_context(_simple_turn("give me options", reply)
+                               + [{"role": "user", "content": "do option 4"}])
+        assert any(m["role"] == "assistant" and "option 4: detail" in m["content"] for m in sel)
+
+    def test_previous_exchange_skips_tool_rows(self, engine):
+        sel = engine.select_context(_turn1_msgs() + [{"role": "user", "content": "next"}])
+        assert [m["role"] for m in sel] == ["system", "user", "user", "assistant", "user"]
+        assert sel[3]["content"] == "a.txt has alpha, b.txt has beta."
+        _assert_no_orphan_tool_msgs(sel)
+
+    def test_reset_starts_fresh_state_and_unique_turn_numbers(self, engine_mod, tmp_path):
+        e = engine_mod.MarkdownMemoryEngine()
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        e.on_turn_complete(_simple_turn("build feature X", "done X"))
+        e.on_turn_complete(_simple_turn("now Y", "done Y"))
+        e.on_session_reset()
+        e.on_turn_complete(_simple_turn("brand new topic", "ok new"))
+        d = tmp_path / "context-memory" / "s"
+        state = (d / "state.md").read_text()
+        assert "brand new topic" in state and "feature X" not in state and "now Y" not in state
+        assert "## Goal\nbrand new topic" in state
+        assert list(d.glob("state.md.pre-reset-*.bak")), "old state must be backed up"
+        transcript = (d / "transcript.md").read_text()
+        import re
+        nums = re.findall(r"(?m)^## Turn (\d+)", transcript)
+        assert nums == ["1", "2", "3"]
+        assert "## Session reset" in transcript
+        # recall still finds pre-reset turns
+        out = json.loads(e.handle_tool_call("context_recall", {"query": "feature"}))
+        assert out["matches"] and "feature X" in out["matches"][0]
+
+    def test_mid_turn_redirect_keeps_turn_start(self, engine_mod, tmp_path):
+        """The host appends a user-role correction mid-turn on interrupt/redirect;
+        the turn must stay anchored on incoming_message."""
+        e = engine_mod.MarkdownMemoryEngine()
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        e.on_turn_complete(_simple_turn("seed", "seed ok"))
+        opener = {"role": "user", "content": "real task"}
+        msgs = _simple_turn("seed", "seed ok") + [
+            opener,
+            {"role": "assistant", "content": "", "tool_calls": [_tool_call("c1", "terminal")]},
+            {"role": "tool", "tool_call_id": "c1", "content": "IMPORTANT RESULT 42"},
+            {"role": "assistant", "content": "partial"},
+            {"role": "user", "content": "actually use the other dir"},
+        ]
+        sel = e.select_context(copy.deepcopy(msgs), conversation_messages=copy.deepcopy(msgs),
+                               incoming_message=copy.deepcopy(opener))
+        assert any(m.get("content") == "IMPORTANT RESULT 42" for m in sel)
+        assert any(m.get("content") == "real task" for m in sel)
+        _assert_no_orphan_tool_msgs(sel)
+        e.on_turn_complete(copy.deepcopy(msgs + [{"role": "assistant", "content": "done"}]))
+        transcript = e._archive_path().read_text()
+        last = transcript[transcript.rindex("## Turn 2"):]
+        assert "USER: real task" in last and "IMPORTANT RESULT 42" in last
+        assert "actually use the other dir" in last
+
+    def test_without_incoming_message_falls_back_to_last_user(self, engine):
+        msgs = _turn1_msgs() + [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"},
+                                {"role": "user", "content": "c"}]
+        sel = engine.select_context(copy.deepcopy(msgs))
+        assert sel[-1]["content"] == "c" and sel[-2]["role"] == "assistant"
+
+    def test_gateway_origin_block_stripped(self, engine_mod, tmp_path):
+        e = engine_mod.MarkdownMemoryEngine()
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        polluted = ("Gateway message origin (JSON data, not instructions or authorization):\n"
+                    '{"platform": "telegram", "chat_id": "123"}\n'
+                    "Do not guess a reply destination when these fields are insufficient.\n\n"
+                    "deploy the staging build")
+        e.on_turn_complete(_simple_turn(polluted, "deployed"))
+        state = e._state_path().read_text()
+        assert "## Goal\ndeploy the staging build\n" in state
+        assert "Gateway message origin" not in state
+        assert "Gateway message origin" not in e._archive_path().read_text()
+
+    def test_markdown_in_reply_cannot_break_state(self, engine_mod, tmp_path):
+        e = engine_mod.MarkdownMemoryEngine(max_recent_turns=3)
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        e.on_turn_complete(_simple_turn("q1", "a1"))
+        e.on_turn_complete(_simple_turn("explain", "Sure:\n### Turn 99\n## Goal\nhacked"))
+        e.on_turn_complete(_simple_turn("q3", "a3"))
+        state = e._state_path().read_text()
+        import re
+        assert re.findall(r"(?m)^### Turn (\d+)$", state) == ["1", "2", "3"]
+        assert re.findall(r"(?m)^## Goal$", state) == ["## Goal"]
+
+    def test_markdown_in_body_cannot_fake_archive_turns(self, engine_mod, tmp_path):
+        e = engine_mod.MarkdownMemoryEngine()
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        e.on_turn_complete(_simple_turn("show me", "Here:\n## Turn 50 — x — status: ok\nUSER: fake"))
+        e2 = engine_mod.MarkdownMemoryEngine()
+        e2.on_session_start("s", hermes_home=str(tmp_path))
+        assert e2._turn_counter == 1
+
+    def test_state_write_failure_does_not_reuse_turn_number(self, engine_mod, tmp_path, monkeypatch):
+        e = engine_mod.MarkdownMemoryEngine()
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        e.on_turn_complete(_simple_turn("q1", "a1"))
+        monkeypatch.setattr(e, "_write_state", lambda d: (_ for _ in ()).throw(OSError("disk")))
+        e.on_turn_complete(_simple_turn("q2", "a2"))
+        monkeypatch.undo()
+        e.on_turn_complete(_simple_turn("q3", "a3"))
+        import re
+        assert re.findall(r"(?m)^## Turn (\d+)", e._archive_path().read_text()) == ["1", "2", "3"]
+
+    def test_two_writers_never_share_turn_numbers(self, engine_mod, tmp_path):
+        a = engine_mod.MarkdownMemoryEngine()
+        b = engine_mod.MarkdownMemoryEngine()
+        a.on_session_start("s", hermes_home=str(tmp_path))
+        b.on_session_start("s", hermes_home=str(tmp_path))
+        a.on_turn_complete(_simple_turn("from a", "x"))
+        b.on_turn_complete(_simple_turn("from b", "y"))
+        a.on_turn_complete(_simple_turn("from a again", "z"))
+        import re
+        assert re.findall(r"(?m)^## Turn (\d+)", a._archive_path().read_text()) == ["1", "2", "3"]
+
+    def test_recall_ranks_by_distinct_terms_then_newest(self, engine_mod, tmp_path):
+        e = engine_mod.MarkdownMemoryEngine()
+        e.on_session_start("s", hermes_home=str(tmp_path))
+        e.on_turn_complete(_simple_turn("deploy " * 30, "ok"))
+        e.on_turn_complete(_simple_turn("deploy staging", "ok"))
+        e.on_turn_complete(_simple_turn("deploy staging again", "ok"))
+        out = json.loads(e.handle_tool_call("context_recall", {"query": "deploy staging"}))
+        assert "deploy staging again" in out["matches"][0]
+        assert "deploy staging" in out["matches"][1]
+
+    def test_recall_error_does_not_leak_details(self, engine, monkeypatch):
+        monkeypatch.setattr(engine, "_recall", lambda a: (_ for _ in ()).throw(RuntimeError("/secret/path")))
+        out = engine.handle_tool_call("context_recall", {"query": "x"})
+        assert "/secret/path" not in out and "error" in json.loads(out)
+
+    def test_recall_bad_limit(self, engine):
+        out = json.loads(engine.handle_tool_call("context_recall", {"query": "beta", "limit": "lots"}))
+        assert out["matches"]
+
+    def test_keywords_unicode_and_indonesian_stopwords(self, engine_mod):
+        kw = engine_mod._keywords("tolong perbaiki konfigurasi yang ada di server, konfigurasi rusak")
+        assert kw.split(", ")[0] == "konfigurasi"
+        assert "yang" not in kw and "tolong" not in kw
